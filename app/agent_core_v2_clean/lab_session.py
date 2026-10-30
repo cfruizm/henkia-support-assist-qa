@@ -43,6 +43,7 @@ from .cache_limits import enforce_cache_limits
 from .document_continuity import continuity_authority
 from .intent_reconciliation import reconcile_procedural_intent
 from .qa_shadow_runtime import observe_shadow, summarize_shadow_turns
+from app.knowledge_gateway import attach as attach_knowledge_comparison
 
 KEY = "agent_core_v2_clean_store"
 
@@ -129,7 +130,7 @@ def build_agent(secrets_obj, s, budget):
     g = _gateway(secrets_obj, s)
     return CleanConversationalAgent(ConversationUnderstanding(g, budget.understanding_max_tokens), ConversationPolicy(), NaturalResponseComposer(g, budget.response_max_tokens, lambda: (s.get(KEY) or {}).get("answer_context") or {}))
 
-def _attach_retrieval(result, message, store):
+def _attach_retrieval(result, message, store, secrets_obj):
     if (result.get("decision") or {}).get("action") not in {"defer_to_retrieval", "diagnose_with_retrieval"}:
         return result
     try:
@@ -197,6 +198,7 @@ def _attach_retrieval(result, message, store):
     except Exception as exc:
         retrieval = {"enabled": True, "ok": False, "llm_called": False, "production_changed": False, "count": 0, "evidence": [], "errors": [{"type": type(exc).__name__, "message": str(exc)}]}
     result["retrieval"] = retrieval
+    attach_knowledge_comparison(result, retrieval, message, secrets_obj)
     result["answer"]["text"] = retrieval_summary(retrieval)
     result["answer"]["mode"] = "retrieval_diagnostic" if retrieval.get("ok") else "retrieval_error"
     return result
@@ -479,7 +481,7 @@ def process_message(message, secrets_obj, s):
             result["escalation"]={"status":handled.get("status"),"pending_field":handled.get("pending_field"),"state":deepcopy(store["memory"].escalation.to_dict())}
             result["state_after"]=deepcopy(store["memory"].to_dict())
         if (result.get("decision") or {}).get("action")!="offer_escalation":
-            result = _attach_retrieval(result, message, store)
+            result = _attach_retrieval(result, message, store, secrets_obj)
         base = result.get("provider_trace") or {}
         contract = (result.get("understanding_contract") or {}).get("valid")
         add_result(store["telemetry"], base.get("understanding"), contract)

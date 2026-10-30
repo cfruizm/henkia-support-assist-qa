@@ -79,7 +79,7 @@ def _trim_cache(cache,limit):
 def _audit_turn(value):
  row=compact_turn(value)
  # Audit exports must preserve causal traces even when runtime memory evicts old turns.
- keep=("input","state_before","understanding","understanding_contract","goal_update_normalization","state_after","decision","answer","retrieval","documented_answer","procedural_answer","internal_knowledge","escalation","provider_trace","turn_metrics","execution","functional_events","error","runtime_compaction","resource_observability","resource_checkpoint_trace","decision_trace","publication_ledger","topic_boundary","entity_frame","qa_shadow")
+ keep=("input","state_before","understanding","understanding_contract","goal_update_normalization","state_after","decision","answer","retrieval","documented_answer","procedural_answer","internal_knowledge","escalation","provider_trace","turn_metrics","execution","functional_events","error","runtime_compaction","resource_observability","resource_checkpoint_trace","decision_trace","publication_ledger","topic_boundary","entity_frame","qa_shadow","knowledge_comparison")
  return {key:deepcopy(row.get(key)) for key in keep if row.get(key) is not None}
 
 def enforce_runtime_memory_limits(store):
