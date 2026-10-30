@@ -42,6 +42,7 @@ from .escalation_export import build_export as build_escalation_export, build_te
 from .cache_limits import enforce_cache_limits
 from .document_continuity import continuity_authority
 from .intent_reconciliation import reconcile_procedural_intent
+from .qa_shadow_runtime import observe_shadow, summarize_shadow_turns
 
 KEY = "agent_core_v2_clean_store"
 
@@ -438,6 +439,7 @@ def process_message(message, secrets_obj, s):
         result = normalize_generation_flags(result)
         result = _apply_visual_format(result)
         _finalize_answer_context(result, store)
+        observe_shadow(result, store, message, secrets_obj)
         result["session_metrics_after_turn"] = snapshot(store["telemetry"])
         text = result["answer"]["text"]
         store["cache_metrics"]["hits"] += 1
@@ -492,6 +494,7 @@ def process_message(message, secrets_obj, s):
         result = normalize_generation_flags(result)
         result = _apply_visual_format(result)
         _finalize_answer_context(result, store)
+        observe_shadow(result, store, message, secrets_obj)
         result["session_metrics_after_turn"] = snapshot(store["telemetry"])
         result["execution"] = {**execution, "cache_hit": False}
         result["cache"] = {"hit": False}
@@ -535,4 +538,5 @@ def export_session(s):
     payload["resource_observability"]=export_diagnostic(x,export_bytes)
     payload["token_optimization_observability"]=token_session_diagnostic(exported_turns)
     payload["diagnostic_manifest"]=build_diagnostic_manifest(x, payload)
+    payload["qa_shadow_observability"]=summarize_shadow_turns(exported_turns)
     return payload
