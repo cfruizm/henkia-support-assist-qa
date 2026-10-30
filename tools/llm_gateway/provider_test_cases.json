@@ -1,0 +1,15 @@
+{
+  "connectivity": {
+    "purpose": "semantic_orchestrator",
+    "max_tokens": 64,
+    "prompt": "Devuelve solo JSON: {\\\"ok\\\":true}"
+  },
+  "semantic": {
+    "purpose": "semantic_orchestrator",
+    "max_tokens": 180
+  },
+  "technical": {
+    "purpose": "technical_answer",
+    "max_tokens": 900
+  }
+}

@@ -1,0 +1,22 @@
+streamlit==1.61.0
+langchain
+langchain-community
+langchain-text-splitters
+langchain-huggingface
+langchain-chroma
+sentence-transformers
+transformers
+torch
+torchvision
+chromadb
+protobuf>=5.26.1,<6
+huggingface_hub>=1.33.0,<2
+pypdf
+beautifulsoup4
+lxml
+requests
+trafilatura
+pandas
+
+## Future OIDC authentication support
+authlib>=1.3.2,<2

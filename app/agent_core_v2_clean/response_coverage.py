@@ -1,0 +1,1 @@
+def response_shape(intent):return {"requirements":{"primary":"prerequisites_not_procedure"},"procedural":{"ordered_steps":True},"troubleshooting":{"respect_confirmed_attempts":True}}.get(str(intent or "").casefold(),{"proportional":True})
