@@ -7,7 +7,7 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 from typing import Any, Mapping
-from .canonical_frame_shadow import STORE_KEY, DIVERGENCE_KEY, build_shadow_frame, enrich_shadow_frame
+from .canonical_frame_shadow import STORE_KEY, build_shadow_frame, enrich_shadow_frame, compare_runtime_detailed
 
 SCHEMA_VERSION=1
 SHADOW_STORE_KEY="qa_canonical_shadow_store"
@@ -51,8 +51,11 @@ def observe_shadow(result:dict,store:dict,message:str,config:Any)->dict:
   sr=_minimal(result)
   build_shadow_frame(ss,message,sr);enrich_shadow_frame(ss,sr)
   frame=deepcopy(sr.get(STORE_KEY) or {})
-  div=deepcopy(sr.get(DIVERGENCE_KEY) or [])[:cfg["max_divergences"]]
-  d.update({"status":"observed","frame":frame,"comparison":{"status":"divergence" if div else "match","divergence_count":len(div),"divergences":div}})
+  comparison=compare_runtime_detailed(sr,frame)
+  comparison["divergences"]=(comparison.get("divergences") or [])[:cfg["max_divergences"]]
+  comparison["divergence_count"]=len(comparison["divergences"])
+  comparison["status"]="divergence" if comparison["divergences"] else "match"
+  d.update({"status":"observed","frame":frame,"comparison":comparison})
   d["serialized_bytes"]=_bytes(d)
  except Exception as exc:
   d.update({"status":"diagnostic_error","error_code":type(exc).__name__,"error_message":str(exc)[:300]})
