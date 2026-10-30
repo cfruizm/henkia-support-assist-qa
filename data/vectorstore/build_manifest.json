@@ -1,0 +1,86 @@
+{
+  "created_at": "2026-08-13T21:22:43.082814",
+  "pdf_dir": "/content/knowledge_base_pdfs",
+  "output_dir": "/content/vectorstore/chroma_multilingual_clean_candidate",
+  "embedding_model_name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "collection_name": "langchain",
+  "chunk_size": 800,
+  "chunk_overlap": 150,
+  "include_unknown": false,
+  "enable_crawl": false,
+  "crawl_only": false,
+  "crawl_mode": "hybrid",
+  "crawl_plans": [
+    "papercut_curated"
+  ],
+  "crawl_json": [
+    "/content/crawl_output_papercut_full/active_web_docs.json"
+  ],
+  "stats": {
+    "pdf_files_found": 98,
+    "pdf_files_loaded": 98,
+    "pdf_files_skipped": 0,
+    "pages_loaded": 2343,
+    "web_pages_visited": 0,
+    "web_docs_indexed": 964,
+    "chunks_created": 17445
+  },
+  "skipped_pdfs": [],
+  "crawl_summary": null,
+  "pdf_collections": {
+    "DA Arus": {
+      "vendor": "arus_internal",
+      "product": "sanitized_support_assets",
+      "collection_name": "DA Arus",
+      "source_type": "pdf",
+      "source_group": "core_support",
+      "priority": 1,
+      "public_or_sanitized": "sanitized"
+    },
+    "GAV Tracking": {
+      "vendor": "gav",
+      "product": "gav_tracking",
+      "collection_name": "GAV Tracking",
+      "source_type": "pdf",
+      "source_group": "core_support",
+      "priority": 1,
+      "public_or_sanitized": "public"
+    },
+    "HP AC": {
+      "vendor": "hp",
+      "product": "hp_access_control",
+      "collection_name": "HP AC",
+      "source_type": "pdf",
+      "source_group": "core_support",
+      "priority": 1,
+      "public_or_sanitized": "public"
+    },
+    "HP SDS": {
+      "vendor": "hp",
+      "product": "sds",
+      "collection_name": "HP SDS",
+      "source_type": "pdf",
+      "source_group": "core_support",
+      "priority": 1,
+      "public_or_sanitized": "public"
+    },
+    "HP WJA": {
+      "vendor": "hp",
+      "product": "web_jetadmin",
+      "collection_name": "HP WJA",
+      "source_type": "pdf",
+      "source_group": "core_support",
+      "priority": 1,
+      "public_or_sanitized": "public"
+    }
+  },
+  "papercut_excluded_manual_prefixes": [
+    "https://www.papercut.com/help/manuals/job-ticketing/",
+    "https://www.papercut.com/help/manuals/mobility-print/",
+    "https://www.papercut.com/help/manuals/print-deploy/",
+    "https://www.papercut.com/help/manuals/new/",
+    "https://www.papercut.com/products/mf/on-premise-ocr/download",
+    "https://www.papercut.com/kb/Category/",
+    "https://www.papercut.com/kb/new"
+  ]
+}
