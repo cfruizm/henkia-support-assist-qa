@@ -4,7 +4,8 @@ from copy import deepcopy
 import json
 from typing import Any, Mapping
 from .canonical_frame_shadow import STORE_KEY,build_shadow_frame,enrich_shadow_frame,compare_runtime_detailed,sync_shadow_case_from_runtime
-SCHEMA_VERSION=2;SHADOW_STORE_KEY="qa_canonical_shadow_store"
+from .qa_boundary_oracle import propose_boundary, apply_boundary_to_shadow
+SCHEMA_VERSION=3;SHADOW_STORE_KEY="qa_canonical_shadow_store"
 def _m(v):return dict(v) if isinstance(v,Mapping) else {}
 def _bool(v,default=False):
  if v is None:return default
@@ -30,7 +31,7 @@ def observe_shadow(result,store,message,config):
   if cfg["requested_enabled"] and not cfg["safety_lock_passed"]:d.update({"status":"blocked_by_safety_lock","error_code":"shadow_mutation_flag_forbidden"})
   result["qa_shadow"]=d;return d
  try:
-  ss=store.setdefault(SHADOW_STORE_KEY,{});ss["answer_context"]=deepcopy(store.get("answer_context") or {});sr=_minimal(result);build_shadow_frame(ss,message,sr);enrich_shadow_frame(ss,sr);frame=deepcopy(sr.get(STORE_KEY) or {});pre=compare_runtime_detailed(sr,frame);frame,case_sync=sync_shadow_case_from_runtime(frame,sr);sr[STORE_KEY]=deepcopy(frame);ss[STORE_KEY]=deepcopy(frame);comparison=compare_runtime_detailed(sr,frame);comparison["pre_case_sync"]={"status":pre.get("status"),"divergences":deepcopy(pre.get("divergences") or [])};comparison["case_sync"]=case_sync;comparison["divergences"]=(comparison.get("divergences") or [])[:cfg["max_divergences"]];comparison["divergence_count"]=len(comparison["divergences"]);comparison["status"]="divergence" if comparison["divergences"] else "match";d.update({"status":"observed","frame":frame,"comparison":comparison});d["serialized_bytes"]=_bytes(d)
+  ss=store.setdefault(SHADOW_STORE_KEY,{});ss["answer_context"]=deepcopy(store.get("answer_context") or {});sr=_minimal(result);build_shadow_frame(ss,message,sr);enrich_shadow_frame(ss,sr);frame=deepcopy(sr.get(STORE_KEY) or {});pre=compare_runtime_detailed(sr,frame);boundary=propose_boundary(sr);frame,boundary_apply=apply_boundary_to_shadow(frame,boundary);frame,case_sync=sync_shadow_case_from_runtime(frame,sr);sr[STORE_KEY]=deepcopy(frame);ss[STORE_KEY]=deepcopy(frame);comparison=compare_runtime_detailed(sr,frame);comparison["pre_boundary"]={"status":pre.get("status"),"divergences":deepcopy(pre.get("divergences") or [])};comparison["boundary_oracle"]=boundary;comparison["boundary_apply"]=boundary_apply;comparison["case_sync"]=case_sync;comparison["divergences"]=(comparison.get("divergences") or [])[:cfg["max_divergences"]];comparison["divergence_count"]=len(comparison["divergences"]);comparison["status"]="divergence" if comparison["divergences"] else "match";d.update({"status":"observed","frame":frame,"comparison":comparison});d["serialized_bytes"]=_bytes(d)
  except Exception as exc:d.update({"status":"diagnostic_error","error_code":type(exc).__name__,"error_message":str(exc)[:300]})
  result["qa_shadow"]=d;return d
 def summarize_shadow_turns(turns):
