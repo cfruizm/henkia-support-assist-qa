@@ -1,2 +1,3 @@
 from .comparison import attach
-__all__=["attach"]
+from .observability import summarize
+__all__=["attach","summarize"]

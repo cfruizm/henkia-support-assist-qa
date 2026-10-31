@@ -43,7 +43,7 @@ from .cache_limits import enforce_cache_limits
 from .document_continuity import continuity_authority
 from .intent_reconciliation import reconcile_procedural_intent
 from .qa_shadow_runtime import observe_shadow, summarize_shadow_turns
-from app.knowledge_gateway import attach as attach_knowledge_comparison
+from app.knowledge_gateway import attach as attach_knowledge_comparison, summarize as summarize_knowledge_comparison
 
 KEY = "agent_core_v2_clean_store"
 
@@ -541,4 +541,5 @@ def export_session(s):
     payload["token_optimization_observability"]=token_session_diagnostic(exported_turns)
     payload["diagnostic_manifest"]=build_diagnostic_manifest(x, payload)
     payload["qa_shadow_observability"]=summarize_shadow_turns(exported_turns)
+    payload["knowledge_comparison_observability"]=summarize_knowledge_comparison(exported_turns)
     return payload
