@@ -1,9 +1,10 @@
-"""Attach KE comparison and normalize documentary identities."""
+"""Attach KE comparison, normalized documentary identities, and QA assessment."""
 from __future__ import annotations
 from copy import deepcopy
 import re,unicodedata
 from typing import Mapping
 from .henkia_knowledge_engine import search
+from .assessment import assess
 
 def _m(v):return dict(v) if isinstance(v,Mapping) else {}
 def normalize_document_name(value):
@@ -36,7 +37,8 @@ def _ke_summary(ke):
     return {"provider":"henkia_ke","published":False,"result_count":len(rows),"top_documents":names[:5],"normalized_top_documents":[normalize_document_name(x) for x in names[:5]],"top_score":rows[0].get("score") if rows else None,"scores":[{"score":r.get("score"),"vector_score":r.get("vector_score"),"rerank_score":r.get("rerank_score")} for r in rows[:10]],"latency_ms":ke.get("latency_ms"),"http_status":ke.get("http_status"),"error":deepcopy(ke.get("error")),"request_diagnostic":deepcopy(ke.get("request_diagnostic"))}
 def attach(result,retrieval,message,config):
     query=str(_m((retrieval or {}).get("query")).get("text") or message or "").strip();ke=search(query,config).to_dict();local=_local_summary(retrieval);ks=_ke_summary(ke)
-    common_norm=sorted(set(local["normalized_top_documents"]) & set(ks["normalized_top_documents"]));display_by_norm={normalize_document_name(x):x for x in local["top_documents"]+ks["top_documents"]}
+    common_norm=sorted(set(local["normalized_top_documents"]) & set(ks["normalized_top_documents"]));display={normalize_document_name(x):x for x in local["top_documents"]+ks["top_documents"]}
     top_match=bool(local["normalized_top_documents"] and ks["normalized_top_documents"] and local["normalized_top_documents"][0]==ks["normalized_top_documents"][0])
-    block={"schema_version":2,"enabled":_m(ke.get("error")).get("code")!="disabled","observational_only":True,"published_provider":"local_chroma","compared_provider":"henkia_ke","query":query,"local_chroma":local,"henkia_ke":ks,"comparison":{"top_document_match":top_match,"top5_document_match":bool(common_norm),"common_top_documents":[display_by_norm[x] for x in common_norm],"common_normalized_documents":common_norm,"ke_result_count":ks["result_count"],"local_result_count":local["result_count"]},"normalized_result":ke,"production_changed":False,"fallback_used":False}
+    assessment=assess(ke,result.get("understanding") or {},query)
+    block={"schema_version":3,"enabled":_m(ke.get("error")).get("code")!="disabled","observational_only":True,"published_provider":"local_chroma","compared_provider":"henkia_ke","query":query,"local_chroma":local,"henkia_ke":ks,"comparison":{"top_document_match":top_match,"top5_document_match":bool(common_norm),"common_top_documents":[display[x] for x in common_norm],"common_normalized_documents":common_norm,"ke_result_count":ks["result_count"],"local_result_count":local["result_count"]},"ke_evidence_assessment":assessment,"normalized_result":ke,"production_changed":False,"fallback_used":False}
     result["knowledge_comparison"]=block;return block
