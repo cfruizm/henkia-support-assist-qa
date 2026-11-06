@@ -9,7 +9,7 @@ import statistics
 import unicodedata
 from typing import Any, Mapping
 
-SCHEMA_VERSION=1
+SCHEMA_VERSION=2
 # Generic Spanish/English function words only. No products, vendors, or test phrases.
 _STOP={"a","al","and","antes","como","con","cual","cuales","de","del","el","en","es","esta","este","for","how","la","las","lo","los","of","o","para","por","que","se","the","to","un","una","unos","unas","y"}
 
@@ -23,7 +23,23 @@ def _number(v):
     except Exception:return None
 
 def assess(ke_result:Mapping[str,Any],understanding:Mapping[str,Any],query:str,low_score:float=.45,high_score:float=.70)->dict:
-    rows=list(_m(ke_result).get("results") or [])
+    result=_m(ke_result)
+    error=_m(result.get("error"))
+    if error:
+        code=_text(error.get("code")) or "provider_error"
+        timeout_phase=_text(error.get("timeout_phase")) or None
+        reason="provider_timeout" if timeout_phase or "timeout" in code.casefold() else "provider_error"
+        return {
+            "schema_version":SCHEMA_VERSION,
+            "status":"not_evaluated",
+            "observational_only":True,
+            "affects_publication":False,
+            "candidate_bands":{"low_score":low_score,"high_score":high_score,"calibrated":False},
+            "features":{"result_count":len(list(result.get("results") or [])),"top_score":None,"second_score":None,"top1_top2_margin":None,"median_top3_score":None,"subject":_text(_m(understanding).get("canonical_subject")),"subject_token_count":len(_tokens(_m(understanding).get("canonical_subject"))),"subject_token_coverage":None,"matched_subject_tokens":[],"query_token_coverage":None,"matched_query_tokens":[],"top_document_count":0,"top_documents":[]},
+            "reasons":[reason],
+            "technical_failure":{"code":code,"timeout_phase":timeout_phase,"retryable":bool(error.get("retryable"))},
+        }
+    rows=list(result.get("results") or [])
     scores=[x for x in (_number(_m(r).get("score")) for r in rows) if x is not None]
     subject=_text(_m(understanding).get("canonical_subject"))
     subject_tokens=_tokens(subject)
