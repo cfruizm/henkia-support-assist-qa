@@ -489,6 +489,7 @@ def process_message(message, secrets_obj, s):
         add_result(store["telemetry"], base.get("understanding"), contract)
         add_result(store["telemetry"], base.get("response"))
         result, conceptual, procedural = _answers(result, message, secrets_obj, s, budget, store)
+        execute_ke_agent_core_shadow(result, message, secrets_obj, s, budget, store, _answers)
         traces = _apply_answer_traces(result, conceptual, procedural, store)
         base_traces = [x for x in (base.get("understanding"), base.get("response")) if x and not x.get("skipped")]
         result["turn_metrics"] = _combined_turn_metrics(base_traces, traces)
