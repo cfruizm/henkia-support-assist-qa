@@ -44,6 +44,7 @@ from .document_continuity import continuity_authority
 from .intent_reconciliation import reconcile_procedural_intent
 from .qa_shadow_runtime import observe_shadow, summarize_shadow_turns
 from app.knowledge_gateway import attach as attach_knowledge_comparison, summarize as summarize_knowledge_comparison
+from app.knowledge_gateway.agent_core_shadow import execute as execute_ke_agent_core_shadow
 
 KEY = "agent_core_v2_clean_store"
 
@@ -435,6 +436,7 @@ def process_message(message, secrets_obj, s):
             conceptual={"skipped":True,"reason":"native_escalation"};procedural={"skipped":True,"reason":"native_escalation"}
         else:
             result, conceptual, procedural = _answers(result, message, secrets_obj, s, budget, store)
+        execute_ke_agent_core_shadow(result, message, secrets_obj, s, budget, store, _answers)
         traces = _apply_answer_traces(result, conceptual, procedural, store)
         result["turn_metrics"] = _combined_turn_metrics([], traces)
         result = reconcile(result, store["memory"])
