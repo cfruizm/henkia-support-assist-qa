@@ -14,6 +14,7 @@ MODULES = (
     "tests.agent_core_v2_clean.test_strict_schema",
     "tests.agent_core_v2_clean.test_partial_publication",
     "tests.agent_core_v2_clean.test_ke_multi_base",
+    "tests.agent_core_v2_clean.test_text_stems",
 )
 
 

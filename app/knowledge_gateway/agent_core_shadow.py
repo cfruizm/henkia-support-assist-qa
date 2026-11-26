@@ -164,6 +164,15 @@ def _route_summary(route_result: Mapping[str, Any], retrieval: Mapping[str, Any]
         "result_count": int(retrieval.get("count") or 0),
         "evidence_status": verdict.get("status"),
         "evidence_accepted": bool(verdict.get("accepted")),
+        # Compact verdict detail kept for diagnosing why KE evidence was accepted or not.
+        "verdict_reason": verdict.get("reason"),
+        "operation_alignment": deepcopy(verdict.get("operation_alignment")),
+        "selected_documents": list(dict.fromkeys(
+            str((item or {}).get("title") or "")[:120] for item in (verdict.get("selected_evidence") or [])
+        ))[:3],
+        "candidate_documents": list(dict.fromkeys(
+            str((item or {}).get("title") or "")[:120] for item in (retrieval.get("diagnostic_evidence") or retrieval.get("evidence") or [])
+        ))[:5],
         "authority_status": authority.get("status") or authority.get("verdict"),
         "answer_generated": bool(str(answer.get("text") or "").strip()),
         "answer_mode": answer.get("mode"),

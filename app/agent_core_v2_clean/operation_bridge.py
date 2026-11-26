@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from .text_stems import stem_index, term_matches
+
 # Spanish stem -> English stems. Keep entries generic (verbs/support nouns).
 _ES_TO_EN_STEMS: dict[str, tuple[str, ...]] = {
     "desinstal": ("uninstall", "remov"),
@@ -114,19 +116,41 @@ def english_stems(term: str) -> tuple[str, ...]:
     return ()
 
 
-def term_present(term: str, available: set[str]) -> bool:
-    """True when the term, or a cross-language equivalent, appears in available tokens."""
+def term_present(term: str, available: set[str], translations: dict | None = None, available_stems: set | None = None) -> bool:
+    """True when the term appears in the available tokens.
+
+    Order: exact token -> same stem (Snowball es/en, any word form) -> the term's
+    English translation from the understanding contract -> legacy stem map
+    (fallback, to be retired once stemming + translations are validated).
+    """
     term = normalize(term)
     if term in available:
         return True
-    stems = english_stems(term)
-    if not stems:
-        return False
-    return any(token.startswith(stem) for stem in stems for token in available)
+    index = available_stems if available_stems is not None else stem_index(available)
+    if term_matches(term, index):
+        return True
+    translated = (translations or {}).get(term)
+    if translated and term_matches(translated, index):
+        return True
+    legacy = english_stems(term)
+    return bool(legacy) and any(token.startswith(stem) for stem in legacy for token in available)
 
 
-def present_terms(terms: set[str], available: set[str]) -> set[str]:
-    return {term for term in terms if term_present(term, available)}
+def present_terms(terms: set[str], available: set[str], translations: dict | None = None) -> set[str]:
+    index = stem_index(available)
+    return {term for term in terms if term_present(term, available, translations, index)}
+
+
+def translation_map(understanding) -> dict:
+    """{normalized source term: english} from the understanding contract."""
+    out = {}
+    for item in (understanding or {}).get("term_translations") or []:
+        if isinstance(item, dict):
+            source, english = normalize(item.get("term")), str(item.get("english") or "").strip()
+            for word in re.findall(r"[a-z0-9]+", source):
+                if english and len(word) >= 3:
+                    out.setdefault(word, english)
+    return out
 
 
 def tokens(value: str) -> set[str]:

@@ -3,7 +3,8 @@ from copy import deepcopy
 import re
 import unicodedata
 
-from .operation_bridge import FILLERS, QUALIFIERS, present_terms
+from .operation_bridge import FILLERS, QUALIFIERS, present_terms, translation_map
+from .text_stems import collapse_by_stem
 
 _GENERIC = {
     "como", "para", "una", "uno", "unos", "unas", "que", "cual", "cuales",
@@ -137,13 +138,13 @@ def _request_text(message, understanding, retrieval):
         return accumulated if technical and len(current&technical)<1 else " ".join((str(message or ""),accumulated))
     return str(message or "")
 
-def _fit(item, wanted):
+def _fit(item, wanted, translations=None):
     title = _tokens(item.get("title"))
     content = title | _tokens(item.get("text"))
     # Cross-language aware: a Spanish operation term also counts when its English
     # equivalent is present (operation_bridge; product-neutral).
-    covered = present_terms(wanted, content)
-    title_hits = present_terms(wanted, title)
+    covered = present_terms(wanted, content, translations)
+    title_hits = present_terms(wanted, title, translations)
     semantic = float((item.get("semantic_fit") or {}).get("score", 0) or 0)
     return {
         "coverage": len(covered) / max(1, len(wanted)),
@@ -399,7 +400,9 @@ def _explicit_document_selection(retrieval, candidates, understanding, wanted):
 def apply_unified_evidence_verdict(retrieval, message, understanding):
     out = deepcopy(retrieval or {})
     candidates = _candidate_pool(out, understanding)
-    wanted = _tokens(_request_text(message, understanding, out))
+    # Count each root once (instala/instalar/instalación): coverage measures concepts, not word forms.
+    wanted = collapse_by_stem(_tokens(_request_text(message, understanding, out)))
+    translations = translation_map(understanding)
     continuity = _primary_continuity_selection(out, candidates, wanted)
     explicit_document = _explicit_document_selection(out, candidates, understanding, wanted)
     requirements = _requirements_selection(candidates, understanding, wanted)
@@ -463,7 +466,7 @@ def apply_unified_evidence_verdict(retrieval, message, understanding):
         return out
     scored = []
     for item in candidates:
-        fit = _fit(item, wanted)
+        fit = _fit(item, wanted, translations)
         item["unified_evidence_fit"] = {k: round(v, 4) if isinstance(v, float) else v for k, v in fit.items()}
         scored.append((fit, item))
     # Prefer exact titles over broad titles when both cover the request. This is
@@ -483,7 +486,7 @@ def apply_unified_evidence_verdict(retrieval, message, understanding):
         target_terms = wanted - _OPERATION
         available_title = _tokens(best.get("title"))
         available = available_title | _tokens(best.get("text"))
-        target_ok = not target_terms or bool(present_terms(target_terms, available))
+        target_ok = not target_terms or bool(present_terms(target_terms, available, translations))
 
         # Separate the confirmed subject from the requested operation/object.
         # A title that only repeats the product name must not authorize an article
@@ -498,8 +501,8 @@ def apply_unified_evidence_verdict(retrieval, message, understanding):
         # Organizational qualifiers ("aprobado") and function words are never
         # stated by vendor documentation, so they are not required dimensions.
         operation_terms = wanted - subject_terms - QUALIFIERS - FILLERS
-        title_operation_hits = present_terms(operation_terms, available_title)
-        content_operation_hits = present_terms(operation_terms, available)
+        title_operation_hits = present_terms(operation_terms, available_title, translations)
+        content_operation_hits = present_terms(operation_terms, available, translations)
         operation_aligned = not operation_terms or bool(content_operation_hits)
 
         direct_title = best_fit["title_hit_count"] >= 2 and bool(title_operation_hits)

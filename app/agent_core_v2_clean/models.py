@@ -15,7 +15,7 @@ class ConversationMemory:
  def to_dict(self):return asdict(self)
 @dataclass
 class TurnUnderstanding:
- user_act:str;intent:str;topic_relation:str;domain_relevance:str;current_goal:str;goal_complete:bool;goal_updates:dict[str,str]=field(default_factory=dict);case_updates:list[dict[str,str]]=field(default_factory=list);needs_clarification:bool=False;clarification_target:str|None=None;should_retrieve:bool=False;confidence:float=0.;reasoning_summary:str="";degraded:bool=False;canonical_subject:str|None=None;subject_origin:str|None=None;reference_relation:str="none";requested_workflow:str="none"
+ user_act:str;intent:str;topic_relation:str;domain_relevance:str;current_goal:str;goal_complete:bool;goal_updates:dict[str,str]=field(default_factory=dict);case_updates:list[dict[str,str]]=field(default_factory=list);needs_clarification:bool=False;clarification_target:str|None=None;should_retrieve:bool=False;confidence:float=0.;reasoning_summary:str="";degraded:bool=False;canonical_subject:str|None=None;subject_origin:str|None=None;reference_relation:str="none";requested_workflow:str="none";term_translations:list[dict[str,str]]=field(default_factory=list)
  def to_dict(self):return asdict(self)
 @dataclass
 class AgentDecision:
