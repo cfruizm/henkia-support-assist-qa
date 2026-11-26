@@ -190,11 +190,23 @@ def _mcp_payload(response):
     return response.json()
 
 
-def _mcp_request(cfg,method,params,request_id):
+# The probe is observational and runs once per document: give MCP more room than
+# a search, so a slow first exchange is told apart from a real refusal.
+MCP_TIMEOUT=(8.0,20.0)
+
+
+def _mcp_request(cfg,method,params,request_id,steps):
     url=f'{_root_url(cfg["base_url"])}/mcp'
     headers={**_MCP_HEADERS,"Authorization":f'Bearer {cfg["api_key"]}'}
     body={"jsonrpc":"2.0","id":request_id,"method":method,"params":params}
-    response=requests.post(url,headers=headers,json=body,timeout=(cfg["connect_timeout_seconds"],cfg["read_timeout_seconds"]))
+    started=time.perf_counter();step={"step":method}
+    steps.append(step)
+    try:
+        response=requests.post(url,headers=headers,json=body,timeout=MCP_TIMEOUT)
+    except requests.RequestException as exc:
+        step.update(error=type(exc).__name__,detail=redact(str(exc))[:160],ms=round((time.perf_counter()-started)*1000))
+        raise
+    step.update(http_status=response.status_code,content_type=str(response.headers.get("content-type") or "")[:40],ms=round((time.perf_counter()-started)*1000))
     return response.status_code,(_mcp_payload(response) if response.ok else {})
 
 
@@ -216,19 +228,20 @@ def mcp_read_document(config_obj,kb_id,document_uri,tool="leer_documento"):
     latency_ms; the tool's input schema is discovered with tools/list.
     """
     cfg=config(config_obj);started=time.perf_counter()
-    out={"ok":False,"http_status":None,"error_code":None,"schema":None,"text":"","latency_ms":None}
+    steps=[]
+    out={"ok":False,"http_status":None,"error_code":None,"schema":None,"text":"","latency_ms":None,"steps":steps}
     def done(**kw):
         out.update(kw);out["latency_ms"]=round((time.perf_counter()-started)*1000,3);return out
     if not cfg["enabled"] or not kb_id or not document_uri:return done(error_code="disabled")
     try:
-        status,_=_mcp_request(cfg,"initialize",{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"support-assist","version":"1"}},1)
+        status,_=_mcp_request(cfg,"initialize",{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"support-assist","version":"1"}},1,steps)
         if status>=400:return done(http_status=status,error_code="initialize_failed")
-        status,listing=_mcp_request(cfg,"tools/list",{},2)
+        status,listing=_mcp_request(cfg,"tools/list",{},2,steps)
         tools={t.get("name"):t for t in ((listing.get("result") or {}).get("tools") or []) if isinstance(t,dict)}
         if status>=400 or tool not in tools:return done(http_status=status,error_code="tool_not_listed" if status<400 else "tools_list_failed")
         schema=tools[tool].get("inputSchema") or {}
         out["schema"]={"properties":sorted((schema.get("properties") or {}).keys()),"required":list(schema.get("required") or [])}
-        status,called=_mcp_request(cfg,"tools/call",{"name":tool,"arguments":_mcp_arguments(schema,kb_id,document_uri)},3)
+        status,called=_mcp_request(cfg,"tools/call",{"name":tool,"arguments":_mcp_arguments(schema,kb_id,document_uri)},3,steps)
     except req_exc.ConnectTimeout:return done(error_code="connect_timeout")
     except req_exc.ReadTimeout:return done(error_code="read_timeout")
     except (requests.RequestException,ValueError) as exc:return done(error_code=type(exc).__name__)

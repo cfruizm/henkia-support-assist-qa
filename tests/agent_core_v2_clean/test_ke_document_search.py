@@ -202,6 +202,8 @@ def test_mcp_read_document_discovers_schema_and_sends_bearer():
     assert sent[2]["params"] == {"name": "leer_documento", "arguments": {"knowledge_base_id": "kb2", "uri": URI}}
     assert out["ok"] and out["text"] == "texto completo del documento"
     assert out["schema"] == {"properties": ["knowledge_base_id", "uri"], "required": ["knowledge_base_id", "uri"]}
+    assert [x["step"] for x in out["steps"]] == ["initialize", "tools/list", "tools/call"]
+    assert all(x["http_status"] == 200 and "ms" in x for x in out["steps"])
 
 
 def test_document_probe_is_off_by_default_cached_and_never_keeps_text():
@@ -227,3 +229,16 @@ def test_document_probe_is_off_by_default_cached_and_never_keeps_text():
     assert first["mcp"]["tool_schema"]["required"] == ["knowledge_base_id", "uri"]
     assert second["cached"] and sent == {} and posted == []
     assert "x" * 50 not in str(first) and "x" * 50 not in str(store[PROBE_CACHE_KEY])
+
+
+def test_mcp_step_failure_is_reported_with_step_name():
+    def post(url, headers=None, json=None, timeout=None):
+        raise ke.req_exc.ReadTimeout("read timed out")
+    original = ke.requests.post
+    ke.requests.post = post
+    try:
+        out = ke.mcp_read_document({**BASE, "HENKIA_KE_KB_IDS": "kb2"}, "kb2", URI)
+    finally:
+        ke.requests.post = original
+    assert out["error_code"] == "read_timeout" and not out["ok"]
+    assert out["steps"] == [{"step": "initialize", "error": "ReadTimeout", "detail": "read timed out", "ms": out["steps"][0]["ms"]}]

@@ -232,7 +232,7 @@ def document_probe(config: Any, retrieval: Mapping[str, Any], store: Any) -> dic
         "attempted": True, "document": str(item.get("title") or "")[:120], "knowledge_base_id": kb_id,
         # REST /document (X-Api-Key) and MCP leer_documento (Bearer); text never kept.
         "rest": outcome(rest),
-        "mcp": {**outcome(mcp), "tool_schema": mcp.get("schema")},
+        "mcp": {**outcome(mcp), "tool_schema": mcp.get("schema"), "steps": mcp.get("steps") or []},
         "ok": bool(rest.get("ok") or mcp.get("ok")), "cached": False,
     }
     cache[uri] = {k: v for k, v in summary.items() if k != "cached"}
