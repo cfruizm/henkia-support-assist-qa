@@ -63,3 +63,11 @@ def test_goal_type_alias_maps_to_intent():
     u = understanding._parse('{"goal_type": "requirements", "current_goal": "Requisitos", "case_updates": []}')
     assert u.intent == "requirements"
     assert "intent" not in understanding.normalization["defaulted_core_fields"]
+
+
+def test_output_contract_lists_every_top_level_key_with_enums():
+    from app.agent_core_v2_clean.understanding import OUTPUT_CONTRACT
+    keys = OUTPUT_CONTRACT["return_exactly_these_keys"]
+    assert set(keys) == set(STRICT_UNDERSTANDING_SCHEMA["properties"])
+    assert "new_request" in keys["user_act"] and "out_of_scope" in keys["domain_relevance"]
+    assert set(keys["goal_updates"]) == set(GOAL_UPDATE_KEYS)

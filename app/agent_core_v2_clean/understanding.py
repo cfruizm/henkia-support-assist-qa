@@ -17,6 +17,22 @@ def _strict_understanding_schema():
  return make_strict(schema)
 
 STRICT_UNDERSTANDING_SCHEMA=_strict_understanding_schema()
+
+def _output_contract(schema):
+ """Compact, model-readable field contract sent inside the request payload.
+
+ Some provider routes accept response_format but do not enforce it, so the model
+ never sees the schema. Every top-level key with its allowed values is listed
+ explicitly; the model must return all of them (null when not applicable).
+ """
+ def describe(prop):
+  if "enum" in prop:return [x for x in prop["enum"] if x is not None]+(["null"] if None in prop["enum"] else [])
+  if isinstance(prop.get("properties"),dict):return {k:describe(v) for k,v in prop["properties"].items()}
+  if prop.get("type")=="array" and isinstance(prop.get("items"),dict):return [describe(prop["items"])]
+  kind=prop.get("type");return "|".join(kind) if isinstance(kind,list) else kind
+ return {"return_exactly_these_keys":{k:describe(v) for k,v in schema["properties"].items()},"rules":"Return every top-level key listed, with no other keys and no nesting of top-level keys inside other objects. Use null for top-level fields that do not apply. In goal_updates include only the listed keys that apply (it may be empty)."}
+
+OUTPUT_CONTRACT=_output_contract(STRICT_UNDERSTANDING_SCHEMA)
 # Keys whose null value means "not provided" and must fall back to the contract default.
 _NULL_MEANS_ABSENT={"user_act","intent","topic_relation","domain_relevance","current_goal","goal_complete","goal_updates","case_updates","needs_clarification","should_retrieve","confidence","reasoning_summary","reference_relation","requested_workflow"}
 
@@ -210,11 +226,11 @@ class ConversationUnderstanding:
  def interpret(self,message,memory):
   from app.llm_gateway.models import LLMRequest
   req=lambda payload,purpose:self.gateway.complete(LLMRequest([{"role":"system","content":SYSTEM},{"role":"user","content":json.dumps(payload,ensure_ascii=False,separators=(",",":"))}],purpose,self.max_tokens,0.,STRICT_UNDERSTANDING_SCHEMA))
-  r=req({"message":message,"context":compact_context(memory)},"agent_core_v2_clean_understanding");self.last_provider_result=r.to_dict();self.contract_valid=False;self.validation_error=None;self.normalization={"removed_goal_update_keys":[]}
+  r=req({"message":message,"context":compact_context(memory),"output_contract":OUTPUT_CONTRACT},"agent_core_v2_clean_understanding");self.last_provider_result=r.to_dict();self.contract_valid=False;self.validation_error=None;self.normalization={"removed_goal_update_keys":[]}
   if not r.ok:self.validation_error="provider_error:"+str(r.error_code or "unknown");return self._degraded_current(message,memory,self.validation_error)
   try:x=self._parse(r.text);self.contract_valid=True;return self._normalize(x,memory,message)
   except Exception as exc:
-   first_error=str(exc);retry=req({"message":message,"context":compact_context(memory),"invalid_output":str(r.text or "")[:4000],"validation_error":first_error,"instruction":"Return only a complete JSON object matching the schema without extra fields."},"agent_core_v2_clean_understanding_repair")
+   first_error=str(exc);retry=req({"message":message,"context":compact_context(memory),"output_contract":OUTPUT_CONTRACT,"invalid_output":str(r.text or "")[:4000],"validation_error":first_error,"instruction":"Return only a complete JSON object matching the schema without extra fields."},"agent_core_v2_clean_understanding_repair")
    self.last_provider_result={"initial":r.to_dict(),"repair":retry.to_dict(),"repair_attempted":True};self.normalization={"removed_goal_update_keys":[],"repair_attempted":True,"repair_succeeded":False}
    if retry.ok:
     try:x=self._parse(retry.text);self.contract_valid=True;self.validation_error=None;self.normalization["repair_attempted"]=True;self.normalization["repair_succeeded"]=True;return self._normalize(x,memory,message)
