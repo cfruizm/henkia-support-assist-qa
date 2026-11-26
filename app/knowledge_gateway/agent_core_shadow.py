@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Callable, Mapping
 
+from app.agent_core_v2_clean.documented_answer import KE_SAME_DOCUMENT_FETCHER
 from app.agent_core_v2_clean.semantic_fit import apply_semantic_fit, capture_answer_context
 from app.agent_core_v2_clean.unified_evidence_authority import apply_unified_evidence_verdict
 from app.agent_core_v2_clean.documentation_limitation import classify as classify_documentation_limitation
@@ -85,14 +86,80 @@ def _ordinal(item: Mapping[str, Any], position: int) -> tuple:
         return (1, 0, position)
 
 
-def apply_ke_document_order(retrieval: dict) -> dict:
+DOCUMENT_FETCH_LIMIT = 12
+EXPANDED_CHUNK_LIMIT = 10
+
+
+def ke_document_fetcher(config: Any, evidence: list[Mapping[str, Any]]) -> Callable | None:
+    """Return fetch(query, source, k) that searches inside one KE document.
+
+    The knowledge base of each document comes from the KE rows already retrieved
+    (metadata.knowledge_base_id), so the fetcher never searches a base the turn
+    did not use. Output follows the same-document adapter contract.
+    """
+    bases = {}
+    for item in evidence or []:
+        md = _mapping(_mapping(item).get("metadata"))
+        if md.get("provider") == "henkia_ke" and item.get("source") and md.get("knowledge_base_id"):
+            bases.setdefault(str(item["source"]), str(md["knowledge_base_id"]))
+    if not bases:
+        return None
+
+    def fetch(query: Any, source: str, k: int = DOCUMENT_FETCH_LIMIT) -> dict:
+        from app.knowledge_gateway.henkia_knowledge_engine import search_document
+        kb_id = bases.get(str(source))
+        if not kb_id:
+            return {"ok": False, "adapter": "henkia_ke_document_filter", "evidence": [], "errors": ["unknown_document"]}
+        result = search_document(query, config, kb_id, source, k)
+        if result.error or result.http_status != 200:
+            return {"ok": False, "adapter": "henkia_ke_document_filter", "evidence": [],
+                    "errors": [str((result.error or {}).get("code") or result.http_status)]}
+        rows = [row for row in ke_evidence_rows(result.to_dict()) if row.get("source") == str(source)]
+        return {"ok": True, "adapter": "henkia_ke_document_filter", "evidence": rows, "errors": []}
+    return fetch
+
+
+def _chunk_key(item: Mapping[str, Any]) -> str:
+    md = _mapping(_mapping(item).get("metadata"))
+    return str(md.get("chunk_id") or md.get("ordinal") or str(_mapping(item).get("text") or "")[:120])
+
+
+def _expand_from_document(selected: list, fetcher: Callable | None, query: Any, source: str) -> tuple[list, dict]:
+    """Add the most relevant chunks of the same KE document to the accepted ones."""
+    if fetcher is None:
+        return selected, {"fetched": False, "reason": "no_fetcher"}
+    try:
+        raw = fetcher(query, source, DOCUMENT_FETCH_LIMIT) or {}
+    except Exception as exc:  # network or contract failure: keep the accepted chunks
+        return selected, {"fetched": False, "reason": "fetch_error", "errors": [type(exc).__name__]}
+    if not raw.get("ok"):
+        return selected, {"fetched": False, "reason": "fetch_failed", "errors": raw.get("errors") or []}
+    seen = {_chunk_key(x) for x in selected}
+    added = []
+    for row in raw.get("evidence") or []:
+        key = _chunk_key(row)
+        if key in seen or len(selected) + len(added) >= EXPANDED_CHUNK_LIMIT:
+            continue
+        seen.add(key)
+        added.append({**deepcopy(row), "origin": "ke_same_document_search"})
+    return selected + added, {"fetched": True, "fetched_count": len(raw.get("evidence") or []), "added_count": len(added)}
+
+
+def document_queries(message: str, result: Mapping[str, Any]) -> list[str]:
+    """Queries for a same-document search: the message and the goal (multi-query)."""
+    goal = str(_mapping(_mapping(result).get("understanding")).get("current_goal") or "").strip()
+    return list(dict.fromkeys(q for q in (str(message or "").strip(), goal) if q))
+
+
+def apply_ke_document_order(retrieval: dict, fetcher: Callable | None = None, query: Any = None) -> dict:
     """Enable procedural composition for one accepted KE document.
 
     KE search returns chunks of the accepted document ranked by score, without
-    pages. When the verdict selects a single KE document, its chunks are put in
-    document order (KE ordinal) and the expansion contract is marked ordered and
-    same-document, so the procedural composer can write a real procedure instead
-    of the degraded reference. No extra KE request is made (full document: KE-05).
+    pages. When the verdict selects a single KE document, the most relevant other
+    chunks of that document are added (KE-05: rag.filters.document_uri, when a
+    fetcher is available), everything is put in document order (KE ordinal) and
+    the expansion contract is marked ordered and same-document, so the procedural
+    composer can write a real procedure instead of the degraded reference.
     """
     selected = list(retrieval.get("generation_evidence") or [])
     verdict = retrieval.get("evidence_verdict") or {}
@@ -103,6 +170,8 @@ def apply_ke_document_order(retrieval: dict) -> dict:
     if len(identities) != 1 or not all(_is_ke_item(x) for x in selected):
         retrieval["procedural_expansion"] = {"enabled": False, "reason": "ke_multiple_documents", "llm_called": False}
         return retrieval
+    source = next(iter(identities))
+    selected, expansion_trace = _expand_from_document(selected, fetcher, query, source)
     ranked = sorted(((_ordinal(x, i), x) for i, x in enumerate(selected)), key=lambda t: t[0])
     ordered = [deepcopy(x) for _, x in ranked]
     remap = {}
@@ -117,10 +186,12 @@ def apply_ke_document_order(retrieval: dict) -> dict:
     retrieval["evidence_verdict"] = verdict
     retrieval["procedural_expansion"] = {
         "enabled": True, "attempted": True, "ok": True, "llm_called": False,
-        "adapter": "henkia_ke_ordinal_order", "seed_document": identities.pop(), "seed_page": None,
+        "adapter": "henkia_ke_document_filter" if expansion_trace.get("fetched") else "henkia_ke_ordinal_order",
+        "seed_document": source, "seed_page": None,
         "pages": [], "count": len(ordered), "ordered": True, "same_document_only": True,
         "ordinals": [_mapping(x.get("metadata")).get("ordinal") for x in ordered],
-        "id_remap": remap, "errors": [], "generation_enabled": False,
+        "document_search": expansion_trace,
+        "id_remap": remap, "errors": list(expansion_trace.get("errors") or []), "generation_enabled": False,
     }
     return retrieval
 
@@ -193,8 +264,12 @@ def build_shadow_retrieval(
     message: str,
     answer_context: Mapping[str, Any] | None = None,
     continuity: Mapping[str, Any] | None = None,
+    config: Any = None,
 ) -> dict:
     """Build the shadow retrieval from KE rows plus the shadow's own context.
+
+    With ``config`` the accepted KE document is expanded with a search inside that
+    document (KE-05); without it (offline tests) only the retrieved chunks are used.
 
     ``answer_context`` must come from the KE shadow ledger (or be empty); the
     published route's ``_answer_context`` is never reused because it carries
@@ -246,7 +321,11 @@ def build_shadow_retrieval(
     retrieval = apply_semantic_fit(retrieval, answer_context)
     retrieval["_answer_context"] = answer_context
     retrieval = apply_unified_evidence_verdict(retrieval, message, _mapping(result.get("understanding")))
-    retrieval = apply_ke_document_order(retrieval)
+    # Each search inside a document adds a KE request to the turn, so it is limited
+    # to procedures, where more stages of the same document change the answer.
+    intent = str(_mapping(result.get("understanding")).get("intent") or "").casefold()
+    fetcher = ke_document_fetcher(config, evidence) if config is not None and intent == "procedural" else None
+    retrieval = apply_ke_document_order(retrieval, fetcher, document_queries(message, result))
     retrieval["documentation_limitation"] = classify_documentation_limitation(retrieval)
     retrieval["_answer_context"] = answer_context
     retrieval = attach_retrieval(dict(result), retrieval, message)
@@ -382,15 +461,21 @@ def execute(result: dict, message: str, config: Any, session: Any, budget: Any, 
         continuity = shadow_continuity(shadow_result, previous_context)
         shadow_result["document_continuity"] = {k: v for k, v in continuity.items() if k != "answer_context"}
         shadow_retrieval = build_shadow_retrieval(
-            shadow_result, message, continuity.get("answer_context") or {}, continuity
+            shadow_result, message, continuity.get("answer_context") or {}, continuity, config
         )
         shadow_result["retrieval"] = shadow_retrieval
         shadow_result["answer"] = {"text": "", "mode": "ke_shadow_pending", "knowledge_used": False}
         shadow_result.pop("documented_answer", None)
         shadow_result.pop("procedural_answer", None)
-        shadow_result, conceptual_trace, procedural_trace = answer_runner(
-            shadow_result, message, config, session, budget, shadow_store
-        )
+        # Composers that read more of a document (exhaustive lists) search inside
+        # the KE document instead of the local vectorstore while the KE route runs.
+        token = KE_SAME_DOCUMENT_FETCHER.set(ke_document_fetcher(config, shadow_retrieval.get("diagnostic_evidence") or shadow_retrieval.get("evidence") or []))
+        try:
+            shadow_result, conceptual_trace, procedural_trace = answer_runner(
+                shadow_result, message, config, session, budget, shadow_store
+            )
+        finally:
+            KE_SAME_DOCUMENT_FETCHER.reset(token)
         local_answer = _mapping(result.get("answer"))
         route = _route_summary(shadow_result, shadow_retrieval)
         isolation = isolation_report(_mapping(shadow_result.get("retrieval")) or shadow_retrieval)

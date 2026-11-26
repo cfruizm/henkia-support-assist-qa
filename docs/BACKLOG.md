@@ -27,7 +27,7 @@ Limitaciones conocidas:
 | KE-03.x | Sombra KE aislada y comparación local vs KE | Hecho |
 | KE-03.4 | Búsqueda en varias bases del KE (`HENKIA_KE_KB_IDS`) | Hecho en código; pendiente validar con la nueva API key |
 | KE-04 | Publicación del KE como complemento (`KNOWLEDGE_PUBLISH_MODE=complement`) cuando Chroma no tiene evidencia y el KE sí | Implementado (F3.5); activar con el secret |
-| KE-05 | Adaptar el Agent Core al KE: búsqueda dentro de un documento (`rag.filters.document_uri`), documento completo (`/document?uri=`), varias consultas es/en | Pendiente |
+| KE-05 | Adaptar el Agent Core al KE: búsqueda dentro de un documento (`rag.filters.document_uri`), documento completo (`/document?uri=`), varias consultas es/en | KE-05.1 implementado: búsqueda dentro del documento (procedimientos y listas exhaustivas). Pendiente: documento completo |
 | KE-06 | KE como proveedor principal con Chroma de respaldo | Requiere corpus completo y campaña etiquetada |
 | KE-07 | Retiro de Chroma | Requiere aprobación de Arquitectura/Seguridad/IA |
 

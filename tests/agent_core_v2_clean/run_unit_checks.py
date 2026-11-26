@@ -17,6 +17,7 @@ MODULES = (
     "tests.agent_core_v2_clean.test_text_stems",
     "tests.agent_core_v2_clean.test_output_caps",
     "tests.agent_core_v2_clean.test_ke_publication",
+    "tests.agent_core_v2_clean.test_ke_document_search",
 )
 
 

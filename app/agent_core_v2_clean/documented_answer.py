@@ -1,4 +1,5 @@
 from __future__ import annotations
+import contextvars
 import hashlib
 import json
 import re
@@ -10,6 +11,11 @@ from .diagnostic_language import soften_diagnostic_certainty
 from .guidance_integrity import build_guidance_integrity_contract, integrity_diagnostic
 from .evidence_boundary import normalize_citation_groups
 from .documented_fact_coverage import augment_exhaustive_numeric_evidence,ensure_enumerated_numeric_fact_coverage,expects_exhaustive_numeric_list,numeric_enumeration_evidence_score,collect_compact_numeric_rows
+
+
+# Set by the KE route while it runs (app.knowledge_gateway.agent_core_shadow):
+# searches inside a KE document instead of the local vectorstore.
+KE_SAME_DOCUMENT_FETCHER: contextvars.ContextVar = contextvars.ContextVar("ke_same_document_fetcher", default=None)
 
 
 def _same_document_fetcher(query, source, k):
@@ -411,7 +417,7 @@ class DocumentedAnswerComposer:
     def compose(self, message, understanding, retrieval):
         # Same-document fetch reads the local vectorstore; the KE shadow route keeps
         # its own evidence only, so the fetcher is disabled there.
-        fetcher = None if str((retrieval or {}).get("provider") or "") == "henkia_ke" else _same_document_fetcher
+        fetcher = KE_SAME_DOCUMENT_FETCHER.get() if str((retrieval or {}).get("provider") or "") == "henkia_ke" else _same_document_fetcher
         retrieval, exhaustive_evidence_expansion = augment_exhaustive_numeric_evidence(retrieval, message, fetcher)
         intent = str(understanding.get("intent") or "").casefold()
         requirements = intent == "requirements"

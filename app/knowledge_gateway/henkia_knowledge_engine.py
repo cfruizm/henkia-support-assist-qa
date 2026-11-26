@@ -67,17 +67,17 @@ def search(query,config_obj):
 # Transient failures that happen while opening the connection (TCP/TLS on a cold
 # start) are reported as connect or read timeouts at about the connect timeout.
 _QUICK_RETRY_CODES={"connect_timeout","read_timeout","connection_error"}
-def _search_with_retry(query,cfg,kb_id):
+def _search_with_retry(query,cfg,kb_id,extra=None):
     """One retry for a base that failed fast with a transient connection error.
 
     A real slow search (read timeout near the read limit) is not retried, so the
     worst case stays bounded at about connect timeout + one full request.
     """
-    first=_search_one(query,cfg,kb_id)
+    first=_search_one(query,cfg,kb_id,extra)
     code=(first.error or {}).get("code")
     fast=(first.latency_ms or 0)<=(cfg["connect_timeout_seconds"]+1.5)*1000
     if code not in _QUICK_RETRY_CODES or not fast:return first
-    second=_search_one(query,cfg,kb_id)
+    second=_search_one(query,cfg,kb_id,extra)
     diag=dict(second.request_diagnostic or {})
     diag.update({"retried":True,"first_error_code":code,"first_latency_ms":first.latency_ms})
     second.request_diagnostic=diag
@@ -103,11 +103,24 @@ def _search_many(query,cfg,ids):
     rows.sort(key=lambda row:(row.score if row.score is not None else float("-inf")),reverse=True)
     if len(ok)<len(parts):diag["partial_failure"]=True
     return SearchResult(provider="henkia_ke",query=query,latency_ms=round((time.perf_counter()-started)*1000,3),knowledge_base_id=cfg["knowledge_base_id"],mode="vector",http_status=200,results=rows[:cfg["max_results"]],has_more=any(bool(part.has_more) for part in ok),next_page=None,published=False,request_diagnostic=diag)
-def _search_one(query,cfg,kb_id):
+def search_document(query,config_obj,kb_id,document_uri,max_results=12):
+    """Search inside one KE document (rag.filters.document_uri), read-only.
+
+    ``query`` may be a list: the KE merges several queries (e.g. message + goal).
+    A filter that matches nothing returns an empty result, not an error.
+    """
+    cfg=config(config_obj)
+    if not cfg["enabled"] or not kb_id or not document_uri:
+        return SearchResult(provider="henkia_ke",query=str(query),knowledge_base_id=kb_id or None,mode="vector",error={"code":"disabled" if not cfg["enabled"] else "missing_document","retryable":False},published=False)
+    cfg={**cfg,"max_results":max(1,min(int(max_results),50))}
+    extra={"rag":{"filters":{"document_uri":[str(document_uri)]}}}
+    return _search_with_retry(query,cfg,kb_id,extra)
+def _search_one(query,cfg,kb_id,extra=None):
     diag={"ranker":"auto","max_num_results":cfg["max_results"],"connect_timeout_seconds":cfg["connect_timeout_seconds"],"read_timeout_seconds":cfg["read_timeout_seconds"]}
+    if extra:diag["filtered_document"]=True
     cfg={**cfg,"knowledge_base_id":kb_id}
     url=f'{cfg["base_url"]}/vector_stores/{kb_id}/search';started=time.perf_counter();status=None
-    payload={"query":query,"max_num_results":cfg["max_results"],"ranking_options":{"ranker":"auto"}}
+    payload={"query":query,"max_num_results":cfg["max_results"],"ranking_options":{"ranker":"auto"},**(extra or {})}
     try:
         response=requests.post(url,headers={"accept":"*/*","Authorization":f'Bearer {cfg["api_key"]}',"Content-Type":"application/json"},json=payload,timeout=(cfg["connect_timeout_seconds"],cfg["read_timeout_seconds"]))
         status=response.status_code;latency=(time.perf_counter()-started)*1000
