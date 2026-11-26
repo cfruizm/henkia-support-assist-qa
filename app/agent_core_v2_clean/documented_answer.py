@@ -452,6 +452,10 @@ class DocumentedAnswerComposer:
             "evidence": evidence,
         }
         limit = 760 if requirements else 620 if conceptual else self.max_tokens
+        # Exhaustive value lists (ports, URLs, ...) need room for every row, even when
+        # the turn was routed as conceptual.
+        if exhaustive_evidence_expansion.get("activated") or expects_exhaustive_numeric_list(message):
+            limit = max(limit, 900)
         result = self.gateway.complete(LLMRequest(
             [{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}],
             "agent_core_v2_clean_documented_answer", limit, 0.0, None,

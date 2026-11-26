@@ -39,6 +39,10 @@ def _fetched_rows(fetch_same_document,question,target):
  for item in raw.get("evidence") or []:
   meta=dict(item.get("metadata") or {});text=" ".join(str(item.get("text") or "").split())
   if not text or str(item.get("source") or "")!=target:continue
+  # Only fragments carrying values can complete a numeric enumeration; skipping
+  # the rest keeps the generation prompt small (QA: 13 fragments exhausted the
+  # output budget with an empty response).
+  if not _numeric_values(text):continue
   page=meta.get("page_label") or meta.get("page") or item.get("page") or ""
   rows.append({"title":item.get("title") or meta.get("title") or "","source":target,"url":item.get("url") or "","page":str(page),"text":text,"metadata":meta,"origin":"exhaustive_same_document_fetch"})
  return rows
