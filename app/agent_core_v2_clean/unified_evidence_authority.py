@@ -61,6 +61,14 @@ def _document_order_key(item, fallback=0):
 def _document_object_candidates(out,candidates):
     fields=(out.get("query") or {}).get("fields") or {};details=fields.get("details") or {};requested=_norm(details.get("document_object") or "")
     if not requested:return [],None
+    # A "document object" that only repeats the conversation subject (e.g. the
+    # product name) is not a section of the active document. Locking to the prior
+    # document on it made a new symptom reuse a setup guide instead of the
+    # troubleshooting article found by global retrieval.
+    object_terms=set(re.findall(r"[a-z0-9]+",requested))
+    subject_terms=set(re.findall(r"[a-z0-9]+",_norm(" ".join(str(x or "") for x in (fields.get("subject"),details.get("subject"),details.get("product"))))))
+    if object_terms and object_terms<=subject_terms:
+        return [],{"requested":requested,"matched":False,"ignored":"object_equals_subject"}
     context=out.get("_answer_context") or {};identities={str(x).strip() for x in context.get("source_identities") or [] if str(x).strip()}
     eligible=[(position,deepcopy(item)) for position,item in enumerate(candidates) if not identities or _identity(item) in identities]
     eligible.sort(key=lambda pair:_document_order_key(pair[1],pair[0]))

@@ -1765,13 +1765,18 @@ def retrieve_context(query: str, top_k: int = 4):
     def add_candidates(new_docs):
         for candidate in new_docs or []:
             md = candidate.metadata or {}
-            key = (
+            # Deduplicate identical chunks, not whole documents: keying only by
+            # source kept one chunk per document across all expanded queries, so
+            # multi-page procedures and tables lost evidence. Per-document diversity
+            # is still bounded later by max_docs_per_source.
+            identity = (
                 md.get("source")
                 or md.get("source_url")
                 or md.get("canonical_url")
                 or md.get("title")
-                or candidate.page_content[:160]
+                or ""
             )
+            key = (identity, md.get("page"), (candidate.page_content or "")[:200])
             if key in seen_candidate_keys:
                 continue
             seen_candidate_keys.add(key)

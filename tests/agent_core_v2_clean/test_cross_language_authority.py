@@ -76,3 +76,19 @@ def test_unrelated_operation_is_still_rejected():
     out = apply_unified_evidence_verdict(_retrieval(INSTALL_DOC), message, _understanding("Integrar Platform Alpha con un CRM externo"))
     verdict = out["evidence_verdict"]
     assert not verdict["accepted"] and verdict["reason"] == "no_operationally_aligned_evidence", verdict
+
+
+def test_document_object_equal_to_subject_does_not_lock_previous_document():
+    from app.agent_core_v2_clean.unified_evidence_authority import _document_object_candidates
+
+    setup = _item("R1", "Set up Feature Beta", "Feature Beta setup: create the virtual queue and enable hold.")
+    context = {"source_identities": [setup["source"]]}
+
+    def out(document_object):
+        details = {"document_object": document_object, "subject": "Platform Alpha Feature Beta"}
+        return {"query": {"fields": {"subject": "Platform Alpha Feature Beta", "details": details}}, "_answer_context": context}
+
+    rows, scope = _document_object_candidates(out("Feature Beta"), [setup])
+    assert rows == [] and scope["ignored"] == "object_equals_subject"
+    rows, _ = _document_object_candidates(out("virtual queue"), [setup])
+    assert len(rows) == 1
