@@ -1,4 +1,9 @@
-"""KE-03: run Agent Core answer stages with KE evidence in an isolated shadow route."""
+"""KE-03/KE-04: run Agent Core answer stages with KE evidence in an isolated route.
+
+KE-03 keeps the route observational. KE-04 (KNOWLEDGE_PUBLISH_MODE=complement)
+publishes the KE answer only when the local answer used no documentation and the
+KE answer is documented and isolated.
+"""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -11,7 +16,7 @@ from app.agent_core_v2_clean.decision_observability import attach_retrieval
 from app.agent_core_v2_clean.document_continuity import continuity_authority
 from app.agent_core_v2_clean.guidance_action_filter import sanitize_answer_context
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Shadow-only conversation context: the answer context produced by the previous
 # KE shadow answer. The published route keeps using store["answer_context"].
@@ -28,6 +33,96 @@ _EVIDENCE_KEYS = ("evidence", "generation_evidence", "diagnostic_evidence")
 
 def _mapping(value: Any) -> dict:
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+# Answer modes that publish documented content (degraded fallbacks excluded).
+DOCUMENTED_MODES = frozenset({
+    "documented_answer", "documented_answer_partial",
+    "procedural_documented_answer", "procedural_documented_answer_partial",
+})
+PUBLISH_MODES = ("off", "complement")
+
+
+def publish_mode(config: Any) -> str:
+    """KNOWLEDGE_PUBLISH_MODE: off (default, observational) or complement."""
+    getter = getattr(config, "get", lambda *_: None)
+    raw = str(getter("KNOWLEDGE_PUBLISH_MODE", "off") or "off").strip().casefold()
+    return raw if raw in PUBLISH_MODES else "off"
+
+
+def _is_documented(answer: Mapping[str, Any]) -> bool:
+    answer = _mapping(answer)
+    return (
+        answer.get("mode") in DOCUMENTED_MODES
+        and bool(answer.get("documented_evidence_used", True))
+        and bool(str(answer.get("text") or "").strip())
+    )
+
+
+def complement_decision(mode: str, local_answer: Mapping[str, Any], ke_answer: Mapping[str, Any],
+                        ke_route: Mapping[str, Any], isolation: Mapping[str, Any]) -> dict:
+    """Decide whether the KE answer replaces the local one (KE-04 complement)."""
+    local_answer = _mapping(local_answer)
+    local_documented = bool(local_answer.get("documented_evidence_used")) or _is_documented(local_answer)
+    checks = {
+        "mode_complement": mode == "complement",
+        "local_not_documented": not local_documented,
+        "ke_documented": _is_documented(ke_answer),
+        "ke_evidence_accepted": _mapping(ke_route).get("evidence_status") in {"sufficient", "partial"},
+        "ke_isolated": bool(_mapping(isolation).get("isolated")),
+    }
+    applied = all(checks.values())
+    failed = next((k for k, ok in checks.items() if not ok), None)
+    reason = "ke_complements_undocumented_local_answer" if applied else f"not_{failed}"
+    return {"mode": mode, "applied": applied, "reason": reason, "checks": checks}
+
+
+def _ordinal(item: Mapping[str, Any], position: int) -> tuple:
+    raw = _mapping(_mapping(item).get("metadata")).get("ordinal")
+    try:
+        return (0, int(raw), position)
+    except (TypeError, ValueError):
+        return (1, 0, position)
+
+
+def apply_ke_document_order(retrieval: dict) -> dict:
+    """Enable procedural composition for one accepted KE document.
+
+    KE search returns chunks of the accepted document ranked by score, without
+    pages. When the verdict selects a single KE document, its chunks are put in
+    document order (KE ordinal) and the expansion contract is marked ordered and
+    same-document, so the procedural composer can write a real procedure instead
+    of the degraded reference. No extra KE request is made (full document: KE-05).
+    """
+    selected = list(retrieval.get("generation_evidence") or [])
+    verdict = retrieval.get("evidence_verdict") or {}
+    identities = {str(x.get("source") or x.get("title") or "") for x in selected}
+    if not selected or verdict.get("status") not in {"sufficient", "partial"}:
+        retrieval["procedural_expansion"] = {"enabled": False, "reason": "ke_no_accepted_document", "llm_called": False}
+        return retrieval
+    if len(identities) != 1 or not all(_is_ke_item(x) for x in selected):
+        retrieval["procedural_expansion"] = {"enabled": False, "reason": "ke_multiple_documents", "llm_called": False}
+        return retrieval
+    ranked = sorted(((_ordinal(x, i), x) for i, x in enumerate(selected)), key=lambda t: t[0])
+    ordered = [deepcopy(x) for _, x in ranked]
+    remap = {}
+    for index, item in enumerate(ordered, 1):
+        remap[str(item.get("id"))] = f"R{index}"
+        item["id"] = f"R{index}"
+    retrieval["generation_evidence"] = deepcopy(ordered)
+    retrieval["evidence"] = deepcopy(ordered)
+    verdict = deepcopy(verdict)
+    verdict["selected_evidence"] = deepcopy(ordered)
+    verdict["evidence_ids"] = [x["id"] for x in ordered]
+    retrieval["evidence_verdict"] = verdict
+    retrieval["procedural_expansion"] = {
+        "enabled": True, "attempted": True, "ok": True, "llm_called": False,
+        "adapter": "henkia_ke_ordinal_order", "seed_document": identities.pop(), "seed_page": None,
+        "pages": [], "count": len(ordered), "ordered": True, "same_document_only": True,
+        "ordinals": [_mapping(x.get("metadata")).get("ordinal") for x in ordered],
+        "id_remap": remap, "errors": [], "generation_enabled": False,
+    }
+    return retrieval
 
 
 def _enabled(config: Any) -> bool:
@@ -134,7 +229,7 @@ def build_shadow_retrieval(
         "diagnostic_only": True,
         "shadow_only": True,
         "production_changed": False,
-        "procedural_expansion": {"enabled": False, "reason": "ke_shadow_no_same_document_expansion", "llm_called": False},
+        "procedural_expansion": {"enabled": False, "reason": "ke_pending_verdict", "llm_called": False},
         "selection": {
             "chosen_mode": "henkia_ke_shadow",
             "quality": None,
@@ -147,6 +242,7 @@ def build_shadow_retrieval(
     retrieval = apply_semantic_fit(retrieval, answer_context)
     retrieval["_answer_context"] = answer_context
     retrieval = apply_unified_evidence_verdict(retrieval, message, _mapping(result.get("understanding")))
+    retrieval = apply_ke_document_order(retrieval)
     retrieval["documentation_limitation"] = classify_documentation_limitation(retrieval)
     retrieval["_answer_context"] = answer_context
     retrieval = attach_retrieval(dict(result), retrieval, message)
@@ -211,6 +307,38 @@ def isolation_report(retrieval: Mapping[str, Any]) -> dict:
     }
 
 
+def _publish_ke_answer(result: dict, shadow_result: Mapping[str, Any], store: Any, block: dict) -> None:
+    """Replace the undocumented local answer with the documented KE answer."""
+    local_answer = deepcopy(_mapping(result.get("answer")))
+    answer = deepcopy(_mapping(shadow_result.get("answer")))
+    answer["retrieval_provider"] = "henkia_ke"
+    result["answer"] = answer
+    result["local_answer_replaced"] = {
+        "mode": local_answer.get("mode"),
+        "knowledge_used": local_answer.get("knowledge_used"),
+        "text_excerpt": str(local_answer.get("text") or "")[:300],
+    }
+    # Follow-up turns and the answer context must see the evidence that was published.
+    result["retrieval"] = deepcopy(_mapping(shadow_result.get("retrieval")))
+    for key in ("documented_answer", "procedural_answer", "conceptual_answer", "evidence_sufficiency"):
+        if key in shadow_result:
+            result[key] = deepcopy(shadow_result[key])
+    memory = store.get("memory") if isinstance(store, Mapping) else None
+    pending = getattr(memory, "pending_goal", None)
+    if pending is not None:
+        pending.status = "complete"
+        if hasattr(memory, "to_dict"):
+            result["state_after"] = deepcopy(memory.to_dict())
+    block.update({
+        "observational_only": False,
+        "visible_to_user": True,
+        "affects_publication": True,
+        "published_provider": "henkia_ke",
+        "production_changed": True,
+    })
+    block["comparison"]["publication_unchanged"] = False
+
+
 def execute(result: dict, message: str, config: Any, session: Any, budget: Any, store: Mapping[str, Any], answer_runner: Callable) -> dict:
     """Execute a no-write KE shadow route using the existing Agent Core answer stages."""
     block = {
@@ -226,6 +354,7 @@ def execute(result: dict, message: str, config: Any, session: Any, budget: Any, 
         "published_provider": "local_chroma",
         "shadow_provider": "henkia_ke",
         "production_changed": False,
+        "publish_mode": publish_mode(config),
     }
     result["agent_core_ke_shadow"] = block
     if not block["enabled"]:
@@ -292,6 +421,12 @@ def execute(result: dict, message: str, config: Any, session: Any, budget: Any, 
             },
             "traces": {"conceptual": conceptual_trace, "procedural": procedural_trace},
         })
+        decision = complement_decision(
+            block["publish_mode"], local_answer, _mapping(shadow_result.get("answer")), route, isolation
+        )
+        block["publication"] = decision
+        if decision["applied"]:
+            _publish_ke_answer(result, shadow_result, store, block)
     except Exception as exc:
         block["shadow_error"] = {"type": type(exc).__name__, "message": str(exc)[:500]}
         block["skip_reason"] = "shadow_execution_error"
