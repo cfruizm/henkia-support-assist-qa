@@ -195,14 +195,14 @@ def _mcp_payload(response):
 MCP_TIMEOUT=(8.0,20.0)
 
 
-def _mcp_request(cfg,method,params,request_id,steps):
+def _mcp_request(cfg,method,params,request_id,steps,timeout=None):
     url=f'{_root_url(cfg["base_url"])}/mcp'
     headers={**_MCP_HEADERS,"Authorization":f'Bearer {cfg["api_key"]}'}
     body={"jsonrpc":"2.0","id":request_id,"method":method,"params":params}
     started=time.perf_counter();step={"step":method}
     steps.append(step)
     try:
-        response=requests.post(url,headers=headers,json=body,timeout=MCP_TIMEOUT)
+        response=requests.post(url,headers=headers,json=body,timeout=timeout or MCP_TIMEOUT)
     except requests.RequestException as exc:
         step.update(error=type(exc).__name__,detail=redact(str(exc))[:160],ms=round((time.perf_counter()-started)*1000))
         raise
@@ -220,7 +220,7 @@ def _mcp_arguments(schema,kb_id,document_uri):
     return args
 
 
-def mcp_read_document(config_obj,kb_id,document_uri,tool="leer_documento"):
+def mcp_read_document(config_obj,kb_id,document_uri,tool="leer_documento",max_chars=None,timeout=None):
     """Read a KE document through the MCP tool, with the M2M key as Bearer.
 
     /mcp accepts the key in Authorization (outside /v1 that header belongs to
@@ -234,14 +234,16 @@ def mcp_read_document(config_obj,kb_id,document_uri,tool="leer_documento"):
         out.update(kw);out["latency_ms"]=round((time.perf_counter()-started)*1000,3);return out
     if not cfg["enabled"] or not kb_id or not document_uri:return done(error_code="disabled")
     try:
-        status,_=_mcp_request(cfg,"initialize",{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"support-assist","version":"1"}},1,steps)
+        status,_=_mcp_request(cfg,"initialize",{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"support-assist","version":"1"}},1,steps,timeout)
         if status>=400:return done(http_status=status,error_code="initialize_failed")
-        status,listing=_mcp_request(cfg,"tools/list",{},2,steps)
+        status,listing=_mcp_request(cfg,"tools/list",{},2,steps,timeout)
         tools={t.get("name"):t for t in ((listing.get("result") or {}).get("tools") or []) if isinstance(t,dict)}
         if status>=400 or tool not in tools:return done(http_status=status,error_code="tool_not_listed" if status<400 else "tools_list_failed")
         schema=tools[tool].get("inputSchema") or {}
         out["schema"]={"properties":sorted((schema.get("properties") or {}).keys()),"required":list(schema.get("required") or [])}
-        status,called=_mcp_request(cfg,"tools/call",{"name":tool,"arguments":_mcp_arguments(schema,kb_id,document_uri)},3,steps)
+        out["raw_schema"]=schema
+        arguments=_mcp_arguments_with_limit(schema,kb_id,document_uri,max_chars) if max_chars else _mcp_arguments(schema,kb_id,document_uri)
+        status,called=_mcp_request(cfg,"tools/call",{"name":tool,"arguments":arguments},3,steps,timeout)
     except req_exc.ConnectTimeout:return done(error_code="connect_timeout")
     except req_exc.ReadTimeout:return done(error_code="read_timeout")
     except (requests.RequestException,ValueError) as exc:return done(error_code=type(exc).__name__)
@@ -251,3 +253,53 @@ def mcp_read_document(config_obj,kb_id,document_uri,tool="leer_documento"):
     text="\n".join(str(c.get("text") or "") for c in (result.get("content") or []) if isinstance(c,dict) and c.get("type")=="text")
     if result.get("isError"):return done(http_status=status,error_code=redact(text[:120]) or "tool_error")
     return done(ok=bool(text),http_status=status,text=text,error_code=None if text else "empty_document")
+
+
+# Tool input schemas discovered with tools/list, per KE host and tool. The MCP
+# server is stateless, so after the first discovery a read is a single
+# tools/call (about 5 s instead of 8 s measured in QA).
+_MCP_SCHEMAS={}
+FULL_DOCUMENT_MAX_CHARS=30000
+FULL_DOCUMENT_TIMEOUT=(5.0,10.0)
+
+
+def _mcp_arguments_with_limit(schema,kb_id,document_uri,max_chars):
+    args=_mcp_arguments(schema,kb_id,document_uri)
+    for name in (schema.get("properties") or {}):
+        low=name.casefold()
+        if low.startswith("max") and ("caracter" in low or "char" in low):args[name]=int(max_chars)
+    return args
+
+
+def _mcp_text(called):
+    result=called.get("result") or {}
+    text="\n".join(str(c.get("text") or "") for c in (result.get("content") or []) if isinstance(c,dict) and c.get("type")=="text")
+    return text,bool(result.get("isError"))
+
+
+def read_full_document(config_obj,kb_id,document_uri,max_chars=FULL_DOCUMENT_MAX_CHARS,tool="leer_documento"):
+    """Full text of one KE document through MCP leer_documento.
+
+    First call per host discovers the tool schema (initialize + tools/list +
+    tools/call); later calls send only tools/call. A failed direct call falls
+    back once to the full handshake. Returns ok, text, error_code, latency_ms,
+    schema_cached and steps (no text in steps).
+    """
+    cfg=config(config_obj);started=time.perf_counter()
+    key=(_root_url(cfg["base_url"]),tool)
+    def done(ok,text="",code=None,cached=False,steps=None):
+        return {"ok":ok,"text":text,"error_code":code,"schema_cached":cached,"steps":steps or [],
+                "latency_ms":round((time.perf_counter()-started)*1000,3)}
+    if not cfg["enabled"] or not kb_id or not document_uri:return done(False,code="disabled")
+    schema=_MCP_SCHEMAS.get(key)
+    if schema is not None:
+        steps=[]
+        try:
+            status,called=_mcp_request(cfg,"tools/call",{"name":tool,"arguments":_mcp_arguments_with_limit(schema,kb_id,document_uri,max_chars)},3,steps,FULL_DOCUMENT_TIMEOUT)
+            text,is_error=_mcp_text(called)
+            if status<400 and not called.get("error") and not is_error and text:return done(True,text,cached=True,steps=steps)
+        except (requests.RequestException,ValueError):
+            pass
+    raw=mcp_read_document(config_obj,kb_id,document_uri,tool,max_chars,FULL_DOCUMENT_TIMEOUT)
+    if raw.get("schema") is not None and raw.get("raw_schema") is not None:_MCP_SCHEMAS[key]=raw["raw_schema"]
+    return done(bool(raw.get("ok")),raw.get("text") or "",raw.get("error_code"),False,raw.get("steps"))

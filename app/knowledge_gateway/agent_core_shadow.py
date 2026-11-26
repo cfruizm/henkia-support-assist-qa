@@ -16,6 +16,7 @@ from app.agent_core_v2_clean.documentation_limitation import classify as classif
 from app.agent_core_v2_clean.decision_observability import attach_retrieval
 from app.agent_core_v2_clean.document_continuity import continuity_authority
 from app.agent_core_v2_clean.guidance_action_filter import sanitize_answer_context
+from app.knowledge_gateway import ke_full_document
 
 SCHEMA_VERSION = 3
 
@@ -143,6 +144,11 @@ def _expand_from_document(selected: list, fetcher: Callable | None, query: Any, 
         seen.add(key)
         added.append({**deepcopy(row), "origin": "ke_same_document_search"})
     return selected + added, {"fetched": True, "fetched_count": len(raw.get("evidence") or []), "added_count": len(added)}
+
+
+def _local_documented(answer: Any) -> bool:
+    answer = _mapping(answer)
+    return bool(answer.get("documented_evidence_used")) or _is_documented(answer)
 
 
 def document_queries(message: str, result: Mapping[str, Any]) -> list[str]:
@@ -308,6 +314,7 @@ def build_shadow_retrieval(
     answer_context: Mapping[str, Any] | None = None,
     continuity: Mapping[str, Any] | None = None,
     config: Any = None,
+    store: Any = None,
 ) -> dict:
     """Build the shadow retrieval from KE rows plus the shadow's own context.
 
@@ -366,9 +373,34 @@ def build_shadow_retrieval(
     retrieval = apply_unified_evidence_verdict(retrieval, message, _mapping(result.get("understanding")))
     # Each search inside a document adds a KE request to the turn, so it is limited
     # to procedures, where more stages of the same document change the answer.
-    intent = str(_mapping(result.get("understanding")).get("intent") or "").casefold()
+    understanding = _mapping(result.get("understanding"))
+    intent = str(understanding.get("intent") or "").casefold()
     fetcher = ke_document_fetcher(config, evidence) if config is not None and intent == "procedural" else None
-    retrieval = apply_ke_document_order(retrieval, fetcher, document_queries(message, result))
+    queries = document_queries(message, result)
+    full_trace = None
+    if fetcher is not None and ke_full_document.enabled(config) and not _local_documented(result.get("answer")):
+        # KE-05.3: the KE answer is the one the user will see; read the full text.
+        retrieval = apply_ke_document_order(retrieval, None, queries)
+        if _mapping(retrieval.get("procedural_expansion")).get("ok"):
+            from app.knowledge_gateway.henkia_knowledge_engine import read_full_document
+            request_text = " ".join([*queries, *(str(v or "") for v in _mapping(understanding.get("goal_updates")).values())])
+            full_trace = ke_full_document.apply_full_document(
+                retrieval, lambda kb_id, uri: read_full_document(config, kb_id, uri), store, request_text
+            )
+        if full_trace and full_trace.get("used"):
+            expansion = retrieval["procedural_expansion"]
+            expansion.update({
+                "adapter": "henkia_ke_full_document",
+                "count": len(retrieval.get("generation_evidence") or []),
+                "ordinals": [_mapping(x.get("metadata")).get("ordinal") for x in retrieval.get("generation_evidence") or []],
+                "full_document": full_trace,
+            })
+        else:
+            retrieval = apply_ke_document_order(retrieval, fetcher, queries)
+            if full_trace is not None:
+                retrieval["procedural_expansion"]["full_document"] = full_trace
+    else:
+        retrieval = apply_ke_document_order(retrieval, fetcher, queries)
     retrieval["documentation_limitation"] = classify_documentation_limitation(retrieval)
     retrieval["_answer_context"] = answer_context
     retrieval = attach_retrieval(dict(result), retrieval, message)
@@ -400,6 +432,7 @@ def _route_summary(route_result: Mapping[str, Any], retrieval: Mapping[str, Any]
         # (documented_answer diagnostics are dropped by runtime memory compaction).
         "document_reads": {
             "procedure": _mapping(_mapping(retrieval.get("procedural_expansion")).get("document_search")) or None,
+            "full_document": {k: v for k, v in _mapping(_mapping(retrieval.get("procedural_expansion")).get("full_document")).items()} or None,
             "exhaustive_list": {
                 k: v for k, v in _mapping(_mapping(documented.get("validation")).get("exhaustive_evidence_expansion")).items()
                 if k in {"activated", "reason", "base_count", "fetched_count", "added_count", "final_count"}
@@ -513,7 +546,7 @@ def execute(result: dict, message: str, config: Any, session: Any, budget: Any, 
         continuity = shadow_continuity(shadow_result, previous_context)
         shadow_result["document_continuity"] = {k: v for k, v in continuity.items() if k != "answer_context"}
         shadow_retrieval = build_shadow_retrieval(
-            shadow_result, message, continuity.get("answer_context") or {}, continuity, config
+            shadow_result, message, continuity.get("answer_context") or {}, continuity, config, store
         )
         shadow_result["retrieval"] = shadow_retrieval
         shadow_result["answer"] = {"text": "", "mode": "ke_shadow_pending", "knowledge_used": False}
