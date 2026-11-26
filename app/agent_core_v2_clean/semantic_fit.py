@@ -42,9 +42,29 @@ def _specificity(item):
  meta=item.get("metadata") or {};title=_raw_terms(item.get("title"));return {"product":str(meta.get("product") or "").casefold(),"component":str(meta.get("component") or "").casefold(),"title_terms":title}
 def _group_key(item):return _identity(item) or str(item.get("title") or "")
 
-def evaluate_item(item,query_text,fields=None,answer_context=None):
+def _structured_request(fields,details):
+ """Request text for a new topic built from the understanding contract.
+
+ The goal is LLM prose whose wording varies between runs ("Explicar cómo..." vs
+ "Obtener los pasos para..."); framing words diluted the score around the
+ threshold. On a new topic the request is the structured details plus the
+ message words the goal or details confirm by stem, plus codes. Returns ""
+ when there is nothing structured (follow-ups keep the accumulated text).
+ """
+ if fields.get("topic_relation")!="new_topic" or not isinstance(details,dict):return ""
+ values=" ".join(str(v or "") for v in details.values()).strip()
+ message=str(fields.get("current_message") or "")
+ if not values or not message:return ""
+ anchors=stem_index({t for t in _norm(" ".join((values,str(fields.get("goal") or "")))).split() if len(t)>=3})
+ kept=[t for t in _norm(message).split() if any(ch.isdigit() for ch in t) or (len(t)>=3 and term_matches(t,anchors))]
+ return " ".join((values," ".join(kept)))
+
+def evaluate_item(item,query_text,fields=None,answer_context=None,canonical=False):
  fields=fields or {};answer_context=answer_context or {};details=fields.get("details") or {}
- stable=" ".join(str(x or "") for x in (query_text,fields.get("goal"),fields.get("contextual_operation"),fields.get("current_message")," ".join(str(v) for v in details.values())))
+ structured=_structured_request(fields,details)
+ # The canonical query repeats the goal prose; ranking variants (e.g. English) add vocabulary.
+ if structured and not canonical:structured=" ".join((structured,str(query_text or "")))
+ stable=structured or " ".join(str(x or "") for x in (query_text,fields.get("goal"),fields.get("contextual_operation"),fields.get("current_message")," ".join(str(v) for v in details.values())))
  q=_terms(stable);d=_document_terms(item);title_terms=_terms(item.get("title"))
  # Stem-aware matching: word forms of one root count once and match each other
  # (analiza/analizar, instala/installation), so a long bilingual query is not diluted.
@@ -92,7 +112,7 @@ def apply_semantic_fit(retrieval,answer_context=None):
    if key not in known:evidence.append(old);known.add(key)
  ranked=[]
  for pos,item in enumerate(evidence):
-  row=copy.deepcopy(item);base_fit=evaluate_item(row,query.get("text") or "",fields,answer_context or {});fits=[("canonical",query.get("text") or "",base_fit)]
+  row=copy.deepcopy(item);base_fit=evaluate_item(row,query.get("text") or "",fields,answer_context or {},canonical=True);fits=[("canonical",query.get("text") or "",base_fit)]
   for candidate in list(row.get("ranking_queries") or [])[-3:]:
    text=str((candidate or {}).get("text") or "").strip()
    if text:fits.append((str((candidate or {}).get("mode") or "candidate"),text,evaluate_item(row,text,fields,answer_context or {})))

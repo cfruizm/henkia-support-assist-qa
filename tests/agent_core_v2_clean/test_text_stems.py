@@ -84,3 +84,21 @@ def test_discourse_marker_is_not_a_required_dimension():
     required = verdict["operation_alignment"]["required_terms"]
     assert "cambiando" not in required and "tema" not in required, verdict
     assert verdict["accepted"], verdict
+
+
+def test_semantic_fit_does_not_depend_on_goal_wording():
+    from app.agent_core_v2_clean.semantic_fit import evaluate_item
+
+    item = {"title": "DA0435-6 V1 MANUAL TECNICO DASHBOARD ALPHA - STREAMLIT.pdf",
+            "text": "El dashboard de control de operación muestra indicadores por cliente; use los filtros para analizar la operación."}
+    message = "Cambiando de tema, ¿cómo se analiza el dashboard de control de operación de Alpha?"
+    details = {"subject": "Alpha", "operation": "analizar", "focus": "dashboard de control de operación"}
+    scores = set()
+    for goal in ("Explicar cómo analizar el dashboard de control de operación de Alpha",
+                 "Obtener los pasos para analizar el dashboard de control de operación de Alpha"):
+        fields = {"goal": goal, "intent": "procedural", "current_message": message,
+                  "topic_relation": "new_topic", "details": details}
+        fit = evaluate_item(item, f"{message} {goal}", fields, canonical=True)
+        assert "cambiando" not in fit["query_terms"] and "pasos" not in fit["query_terms"], fit
+        scores.add(fit["score"])
+    assert len(scores) == 1 and scores.pop() >= 0.15
