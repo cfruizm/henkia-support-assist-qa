@@ -62,8 +62,26 @@ def search(query,config_obj):
         code="disabled" if not cfg["requested_enabled"] else "invalid_configuration"
         return SearchResult(provider="henkia_ke",query=query,knowledge_base_id=cfg["knowledge_base_id"] or None,mode=cfg["mode"],error={"code":code,"details":cfg["errors"],"retryable":False},published=False,request_diagnostic=diag)
     ids=cfg["knowledge_base_ids"]
-    if len(ids)==1:return _search_one(query,cfg,ids[0])
+    if len(ids)==1:return _search_with_retry(query,cfg,ids[0])
     return _search_many(query,cfg,ids)
+# Transient failures that happen while opening the connection (TCP/TLS on a cold
+# start) are reported as connect or read timeouts at about the connect timeout.
+_QUICK_RETRY_CODES={"connect_timeout","read_timeout","connection_error"}
+def _search_with_retry(query,cfg,kb_id):
+    """One retry for a base that failed fast with a transient connection error.
+
+    A real slow search (read timeout near the read limit) is not retried, so the
+    worst case stays bounded at about connect timeout + one full request.
+    """
+    first=_search_one(query,cfg,kb_id)
+    code=(first.error or {}).get("code")
+    fast=(first.latency_ms or 0)<=(cfg["connect_timeout_seconds"]+1.5)*1000
+    if code not in _QUICK_RETRY_CODES or not fast:return first
+    second=_search_one(query,cfg,kb_id)
+    diag=dict(second.request_diagnostic or {})
+    diag.update({"retried":True,"first_error_code":code,"first_latency_ms":first.latency_ms})
+    second.request_diagnostic=diag
+    return second
 def _search_many(query,cfg,ids):
     """Search several knowledge bases in parallel and merge by score.
 
@@ -75,8 +93,8 @@ def _search_many(query,cfg,ids):
     from concurrent.futures import ThreadPoolExecutor
     started=time.perf_counter()
     with ThreadPoolExecutor(max_workers=min(4,len(ids))) as pool:
-        parts=list(pool.map(lambda kb:_search_one(query,cfg,kb),ids))
-    per_base=[{"knowledge_base_id":kb,"http_status":part.http_status,"count":len(part.results),"latency_ms":part.latency_ms,"error_code":(part.error or {}).get("code")} for kb,part in zip(ids,parts)]
+        parts=list(pool.map(lambda kb:_search_with_retry(query,cfg,kb),ids))
+    per_base=[{"knowledge_base_id":kb,"http_status":part.http_status,"count":len(part.results),"latency_ms":part.latency_ms,"error_code":(part.error or {}).get("code"),"retried":bool((part.request_diagnostic or {}).get("retried"))} for kb,part in zip(ids,parts)]
     diag={"ranker":"auto","max_num_results":cfg["max_results"],"connect_timeout_seconds":cfg["connect_timeout_seconds"],"read_timeout_seconds":cfg["read_timeout_seconds"],"knowledge_bases":per_base,"strategy":"parallel_merge_by_score"}
     ok=[part for part in parts if part.http_status==200 and not part.error]
     if not ok:

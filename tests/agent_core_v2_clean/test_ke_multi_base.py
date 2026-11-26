@@ -94,3 +94,41 @@ def test_single_base_keeps_previous_behavior():
     result, calls = _with_fake(responses, {**BASE, "HENKIA_KE_KB_ID": "solo"})
     assert calls == ["solo"] and result.knowledge_base_id == "solo"
     assert result.results[0].knowledge_base_id == "solo"
+
+
+def _flaky_post(fail_times, calls, error):
+    state = {"n": 0}
+
+    def post(url, headers=None, json=None, timeout=None):
+        kb = url.split("/vector_stores/")[1].split("/")[0]
+        calls.append(kb)
+        if kb == "kb2" and state["n"] < fail_times:
+            state["n"] += 1
+            raise error
+        return _Response(200, {"data": [_row(f"{kb}-a", 0.8)]})
+    return post
+
+
+def _run_flaky(fail_times, error):
+    calls = []
+    original = ke.requests.post
+    ke.requests.post = _flaky_post(fail_times, calls, error)
+    try:
+        return ke.search("¿pregunta?", {**BASE, "HENKIA_KE_KB_IDS": ["kb1", "kb2"]}), calls
+    finally:
+        ke.requests.post = original
+
+
+def test_fast_transient_timeout_is_retried_once():
+    result, calls = _run_flaky(1, ke.req_exc.ReadTimeout("handshake"))
+    assert calls.count("kb2") == 2 and calls.count("kb1") == 1
+    assert {r.knowledge_base_id for r in result.results} == {"kb1", "kb2"}
+    kb2 = next(b for b in result.request_diagnostic["knowledge_bases"] if b["knowledge_base_id"] == "kb2")
+    assert kb2["retried"] and kb2["error_code"] is None
+    assert "partial_failure" not in result.request_diagnostic
+
+
+def test_retry_happens_only_once():
+    result, calls = _run_flaky(5, ke.req_exc.ConnectTimeout("cold"))
+    assert calls.count("kb2") == 2
+    assert result.request_diagnostic["partial_failure"] is True
