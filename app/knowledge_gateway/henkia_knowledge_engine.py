@@ -173,3 +173,68 @@ def fetch_document(config_obj,kb_id,document_uri):
     try:body=response.json()
     except Exception:return done(False,response.status_code,"invalid_json")
     return done(True,response.status_code,None,str(body.get("document_name") or ""),str(body.get("text") or ""))
+
+
+_MCP_HEADERS={"Accept":"application/json, text/event-stream","Content-Type":"application/json","MCP-Protocol-Version":"2025-06-18"}
+
+
+def _mcp_payload(response):
+    """JSON-RPC message from a Streamable HTTP response (JSON or SSE)."""
+    if "text/event-stream" in str(response.headers.get("content-type") or ""):
+        for line in str(response.text or "").splitlines():
+            if line.startswith("data:"):
+                import json as _json
+                try:return _json.loads(line[5:].strip())
+                except ValueError:continue
+        return {}
+    return response.json()
+
+
+def _mcp_request(cfg,method,params,request_id):
+    url=f'{_root_url(cfg["base_url"])}/mcp'
+    headers={**_MCP_HEADERS,"Authorization":f'Bearer {cfg["api_key"]}'}
+    body={"jsonrpc":"2.0","id":request_id,"method":method,"params":params}
+    response=requests.post(url,headers=headers,json=body,timeout=(cfg["connect_timeout_seconds"],cfg["read_timeout_seconds"]))
+    return response.status_code,(_mcp_payload(response) if response.ok else {})
+
+
+def _mcp_arguments(schema,kb_id,document_uri):
+    """Map leer_documento input properties to our values by name (schema discovered live)."""
+    args={}
+    for name in (schema.get("properties") or {}):
+        low=name.casefold()
+        if "uri" in low or "document" in low or low in {"source","name"}:args[name]=str(document_uri)
+        elif "base" in low or "knowledge" in low or low in {"kb","kb_id"}:args[name]=str(kb_id)
+    return args
+
+
+def mcp_read_document(config_obj,kb_id,document_uri,tool="leer_documento"):
+    """Read a KE document through the MCP tool, with the M2M key as Bearer.
+
+    /mcp accepts the key in Authorization (outside /v1 that header belongs to
+    the BFF service key). Returns ok, http_status, error_code, schema, text and
+    latency_ms; the tool's input schema is discovered with tools/list.
+    """
+    cfg=config(config_obj);started=time.perf_counter()
+    out={"ok":False,"http_status":None,"error_code":None,"schema":None,"text":"","latency_ms":None}
+    def done(**kw):
+        out.update(kw);out["latency_ms"]=round((time.perf_counter()-started)*1000,3);return out
+    if not cfg["enabled"] or not kb_id or not document_uri:return done(error_code="disabled")
+    try:
+        status,_=_mcp_request(cfg,"initialize",{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"support-assist","version":"1"}},1)
+        if status>=400:return done(http_status=status,error_code="initialize_failed")
+        status,listing=_mcp_request(cfg,"tools/list",{},2)
+        tools={t.get("name"):t for t in ((listing.get("result") or {}).get("tools") or []) if isinstance(t,dict)}
+        if status>=400 or tool not in tools:return done(http_status=status,error_code="tool_not_listed" if status<400 else "tools_list_failed")
+        schema=tools[tool].get("inputSchema") or {}
+        out["schema"]={"properties":sorted((schema.get("properties") or {}).keys()),"required":list(schema.get("required") or [])}
+        status,called=_mcp_request(cfg,"tools/call",{"name":tool,"arguments":_mcp_arguments(schema,kb_id,document_uri)},3)
+    except req_exc.ConnectTimeout:return done(error_code="connect_timeout")
+    except req_exc.ReadTimeout:return done(error_code="read_timeout")
+    except (requests.RequestException,ValueError) as exc:return done(error_code=type(exc).__name__)
+    if status>=400:return done(http_status=status,error_code="tools_call_failed")
+    if called.get("error"):return done(http_status=status,error_code=redact(str((called.get("error") or {}).get("code") or "jsonrpc_error")))
+    result=called.get("result") or {}
+    text="\n".join(str(c.get("text") or "") for c in (result.get("content") or []) if isinstance(c,dict) and c.get("type")=="text")
+    if result.get("isError"):return done(http_status=status,error_code=redact(text[:120]) or "tool_error")
+    return done(ok=bool(text),http_status=status,text=text,error_code=None if text else "empty_document")

@@ -163,21 +163,67 @@ def test_fetch_document_reports_forbidden_without_text():
     assert not out["ok"] and out["http_status"] == 403 and out["error_code"] == "HENKIA-RAG-1003" and out["text"] == ""
 
 
+class _McpResponse:
+    def __init__(self, payload, sse=False):
+        import json as _json
+        self.status_code = 200
+        self.ok = True
+        self.headers = {"content-type": "text/event-stream" if sse else "application/json"}
+        self._payload = payload
+        self.text = "event: message\ndata: " + _json.dumps(payload) + "\n\n" if sse else ""
+
+    def json(self):
+        return self._payload
+
+
+def _fake_mcp(sent, text="texto completo del documento"):
+    def post(url, headers=None, json=None, timeout=None):
+        sent.append({"url": url, "auth": (headers or {}).get("Authorization"), "method": json["method"], "params": json["params"]})
+        if json["method"] == "initialize":
+            return _McpResponse({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-06-18"}})
+        if json["method"] == "tools/list":
+            tool = {"name": "leer_documento", "inputSchema": {"properties": {"knowledge_base_id": {}, "uri": {}},
+                                                              "required": ["knowledge_base_id", "uri"]}}
+            return _McpResponse({"jsonrpc": "2.0", "id": 2, "result": {"tools": [tool]}}, sse=True)
+        return _McpResponse({"jsonrpc": "2.0", "id": 3, "result": {"content": [{"type": "text", "text": text}]}}, sse=True)
+    return post
+
+
+def test_mcp_read_document_discovers_schema_and_sends_bearer():
+    sent = []
+    original = ke.requests.post
+    ke.requests.post = _fake_mcp(sent)
+    try:
+        out = ke.mcp_read_document({**BASE, "HENKIA_KE_KB_IDS": "kb2"}, "kb2", URI)
+    finally:
+        ke.requests.post = original
+    assert [x["method"] for x in sent] == ["initialize", "tools/list", "tools/call"]
+    assert all(x["url"] == "https://ke.example.test/mcp" and x["auth"] == "Bearer test-key" for x in sent)
+    assert sent[2]["params"] == {"name": "leer_documento", "arguments": {"knowledge_base_id": "kb2", "uri": URI}}
+    assert out["ok"] and out["text"] == "texto completo del documento"
+    assert out["schema"] == {"properties": ["knowledge_base_id", "uri"], "required": ["knowledge_base_id", "uri"]}
+
+
 def test_document_probe_is_off_by_default_cached_and_never_keeps_text():
     from app.knowledge_gateway.agent_core_shadow import PROBE_CACHE_KEY, document_probe
 
     retrieval = {"generation_evidence": [_ke("R1", 3)]}
     assert document_probe({}, retrieval, {}) is None
-    sent = {}
-    original = _with_fake_get(200, {"document_name": "IN0504.pdf", "text": "x" * 500}, sent)
+    sent, posted = {}, []
+    original_get = _with_fake_get(401, {"detail": "x", "error": {"code": "HENKIA-AUTH-0001"}}, sent)
+    original_post = ke.requests.post
+    ke.requests.post = _fake_mcp(posted, "x" * 500)
     store = {}
     config = {**BASE, "HENKIA_KE_KB_IDS": "kb2", "HENKIA_KE_DOCUMENT_PROBE": "true"}
     try:
         first = document_probe(config, retrieval, store)
-        sent.clear()
+        sent.clear(); posted.clear()
         second = document_probe(config, retrieval, store)
     finally:
-        ke.requests.get = original
-    assert first["ok"] and first["chars"] == 500 and not first["cached"]
-    assert second["cached"] and sent == {}
-    assert "text" not in first and "x" * 50 not in str(store[PROBE_CACHE_KEY])
+        ke.requests.get = original_get
+        ke.requests.post = original_post
+    assert first["rest"]["http_status"] == 401 and first["rest"]["error_code"] == "HENKIA-AUTH-0001"
+    assert first["mcp"]["ok"] and first["mcp"]["chars"] == 500 and first["ok"]
+    assert first["mcp"]["tool_schema"]["required"] == ["knowledge_base_id", "uri"]
+    assert second["cached"] and sent == {} and posted == []
+    assert "x" * 50 not in str(first) and "x" * 50 not in str(store[PROBE_CACHE_KEY])

@@ -221,12 +221,19 @@ def document_probe(config: Any, retrieval: Mapping[str, Any], store: Any) -> dic
     cache = store.setdefault(PROBE_CACHE_KEY, {}) if isinstance(store, dict) else {}
     if uri in cache:
         return {**cache[uri], "cached": True}
-    from app.knowledge_gateway.henkia_knowledge_engine import fetch_document
-    raw = fetch_document(config, kb_id, uri)
+    from app.knowledge_gateway.henkia_knowledge_engine import fetch_document, mcp_read_document
+
+    def outcome(raw: Mapping[str, Any]) -> dict:
+        return {"ok": bool(raw.get("ok")), "http_status": raw.get("http_status"), "error_code": raw.get("error_code"),
+                "chars": len(raw.get("text") or ""), "latency_ms": raw.get("latency_ms")}
+    rest = fetch_document(config, kb_id, uri)
+    mcp = mcp_read_document(config, kb_id, uri)
     summary = {
         "attempted": True, "document": str(item.get("title") or "")[:120], "knowledge_base_id": kb_id,
-        "ok": bool(raw.get("ok")), "http_status": raw.get("http_status"), "error_code": raw.get("error_code"),
-        "chars": len(raw.get("text") or ""), "latency_ms": raw.get("latency_ms"), "cached": False,
+        # REST /document (X-Api-Key) and MCP leer_documento (Bearer); text never kept.
+        "rest": outcome(rest),
+        "mcp": {**outcome(mcp), "tool_schema": mcp.get("schema")},
+        "ok": bool(rest.get("ok") or mcp.get("ok")), "cached": False,
     }
     cache[uri] = {k: v for k, v in summary.items() if k != "cached"}
     return summary
