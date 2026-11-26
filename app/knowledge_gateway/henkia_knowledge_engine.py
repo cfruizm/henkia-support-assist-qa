@@ -178,16 +178,42 @@ def fetch_document(config_obj,kb_id,document_uri):
 _MCP_HEADERS={"Accept":"application/json, text/event-stream","Content-Type":"application/json","MCP-Protocol-Version":"2025-06-18"}
 
 
+def _response_text(response):
+    """Body as UTF-8. An SSE response without charset is decoded as ISO-8859-1 by
+    requests (QA: "configuraciÃ³n"), so the raw bytes are decoded explicitly."""
+    content=getattr(response,"content",None)
+    if isinstance(content,(bytes,bytearray)):return bytes(content).decode("utf-8",errors="replace")
+    return str(getattr(response,"text","") or "")
+
+
 def _mcp_payload(response):
     """JSON-RPC message from a Streamable HTTP response (JSON or SSE)."""
+    import json as _json
     if "text/event-stream" in str(response.headers.get("content-type") or ""):
-        for line in str(response.text or "").splitlines():
+        for line in _response_text(response).splitlines():
             if line.startswith("data:"):
-                import json as _json
                 try:return _json.loads(line[5:].strip())
                 except ValueError:continue
         return {}
+    content=getattr(response,"content",None)
+    if isinstance(content,(bytes,bytearray)):return _json.loads(_response_text(response))
     return response.json()
+
+
+def _tool_document_text(text):
+    """Plain document text from a leer_documento result.
+
+    The tool returns a JSON object (base, uri, ... and the text) as its text
+    content; the document is the longest string value. Plain text is kept.
+    """
+    value=str(text or "").strip()
+    if not value.startswith("{"):return value
+    import json as _json
+    try:data=_json.loads(value)
+    except ValueError:return value
+    if not isinstance(data,dict):return value
+    strings=[v for v in data.values() if isinstance(v,str)]
+    return max(strings,key=len) if strings else value
 
 
 # The probe is observational and runs once per document: give MCP more room than
@@ -250,7 +276,7 @@ def mcp_read_document(config_obj,kb_id,document_uri,tool="leer_documento",max_ch
     if status>=400:return done(http_status=status,error_code="tools_call_failed")
     if called.get("error"):return done(http_status=status,error_code=redact(str((called.get("error") or {}).get("code") or "jsonrpc_error")))
     result=called.get("result") or {}
-    text="\n".join(str(c.get("text") or "") for c in (result.get("content") or []) if isinstance(c,dict) and c.get("type")=="text")
+    text=_tool_document_text("\n".join(str(c.get("text") or "") for c in (result.get("content") or []) if isinstance(c,dict) and c.get("type")=="text"))
     if result.get("isError"):return done(http_status=status,error_code=redact(text[:120]) or "tool_error")
     return done(ok=bool(text),http_status=status,text=text,error_code=None if text else "empty_document")
 
@@ -273,7 +299,7 @@ def _mcp_arguments_with_limit(schema,kb_id,document_uri,max_chars):
 
 def _mcp_text(called):
     result=called.get("result") or {}
-    text="\n".join(str(c.get("text") or "") for c in (result.get("content") or []) if isinstance(c,dict) and c.get("type")=="text")
+    text=_tool_document_text("\n".join(str(c.get("text") or "") for c in (result.get("content") or []) if isinstance(c,dict) and c.get("type")=="text"))
     return text,bool(result.get("isError"))
 
 

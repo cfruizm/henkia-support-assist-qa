@@ -154,3 +154,44 @@ def test_route_skips_full_document_when_local_is_documented_or_disabled():
     assert reads == [] and len(searches) == 1
     _, reads, _ = _run("controlled_internal_knowledge", False, enabled=False)
     assert reads == []
+
+
+class _BytesSse:
+    """SSE response as the KE sends it: UTF-8 bytes, no charset in the header."""
+
+    def __init__(self, payload):
+        import json as _json
+        self.status_code = 200
+        self.ok = True
+        self.headers = {"content-type": "text/event-stream"}
+        self.content = ("event: message\ndata: " + _json.dumps(payload, ensure_ascii=False) + "\n\n").encode("utf-8")
+
+    @property
+    def text(self):  # what requests would return without charset
+        return self.content.decode("iso-8859-1")
+
+
+def test_sse_bytes_are_decoded_as_utf8_and_tool_json_is_unwrapped():
+    import json as _json
+    body = "A continuación, deberá realizar el registro.\n\nIngrese el código de acceso."
+    wrapped = _json.dumps({"base": "kb-kb2", "uri": URI, "texto": body}, ensure_ascii=False, indent=1)
+
+    def post(url, headers=None, json=None, timeout=None):
+        if json["method"] == "initialize":
+            return _BytesSse({"jsonrpc": "2.0", "id": 1, "result": {}})
+        if json["method"] == "tools/list":
+            return _BytesSse({"jsonrpc": "2.0", "id": 2, "result": {"tools": [
+                {"name": "leer_documento", "inputSchema": {"properties": {"base": {}, "uri": {}, "max_caracteres": {}}}}]}})
+        assert json["params"]["arguments"] == {"base": "kb2", "uri": URI, "max_caracteres": 30000}
+        return _BytesSse({"jsonrpc": "2.0", "id": 3, "result": {"content": [{"type": "text", "text": wrapped}]}})
+    original = ke.requests.post
+    ke.requests.post = post
+    ke._MCP_SCHEMAS.clear()
+    try:
+        out = ke.read_full_document({**BASE, "HENKIA_KE_KB_IDS": "kb2"}, "kb2", URI)
+    finally:
+        ke.requests.post = original
+        ke._MCP_SCHEMAS.clear()
+    assert out["ok"] and out["text"] == body
+    assert "Ã" not in out["text"] and '"base"' not in out["text"]
+    assert full.split_sections(out["text"], size=50) == ["A continuación, deberá realizar el registro.", "Ingrese el código de acceso."]
