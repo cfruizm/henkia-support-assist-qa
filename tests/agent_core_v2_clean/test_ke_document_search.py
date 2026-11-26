@@ -102,3 +102,20 @@ def test_ke_route_exposes_its_fetcher_only_while_it_runs():
     execute(result, "Requisitos de HP SDS", {}, {}, None, {"answer_context": {}}, runner)
     assert callable(seen["fetcher"])
     assert KE_SAME_DOCUMENT_FETCHER.get() is None
+
+
+def test_route_summary_keeps_document_reads_after_compaction():
+    from app.agent_core_v2_clean.runtime_memory import _compact_ke_shadow
+    from app.knowledge_gateway.agent_core_shadow import _route_summary
+
+    route_result = {"answer": {"text": "x", "mode": "documented_answer"},
+                    "documented_answer": {"validation": {"exhaustive_evidence_expansion": {
+                        "activated": True, "reason": "same_document_diagnostic_fragments_added",
+                        "fetched_count": 8, "added_count": 5, "selected_document": "doc"}}}}
+    retrieval = {"procedural_expansion": {"document_search": {"fetched": True, "fetched_count": 12, "added_count": 2}}}
+    block = _compact_ke_shadow({"ke_route": _route_summary(route_result, retrieval)})
+    reads = block["ke_route"]["document_reads"]
+    assert reads["procedure"]["added_count"] == 2
+    assert reads["exhaustive_list"] == {"activated": True, "reason": "same_document_diagnostic_fragments_added",
+                                        "fetched_count": 8, "added_count": 5}
+    assert "documented_answer" not in block["ke_route"]

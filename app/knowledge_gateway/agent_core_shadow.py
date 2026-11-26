@@ -353,6 +353,15 @@ def _route_summary(route_result: Mapping[str, Any], retrieval: Mapping[str, Any]
             str((item or {}).get("title") or "")[:120] for item in (retrieval.get("diagnostic_evidence") or retrieval.get("evidence") or [])
         ))[:5],
         "authority_status": authority.get("status") or authority.get("verdict"),
+        # KE-05 reads inside the accepted document, kept compact for the audit
+        # (documented_answer diagnostics are dropped by runtime memory compaction).
+        "document_reads": {
+            "procedure": _mapping(_mapping(retrieval.get("procedural_expansion")).get("document_search")) or None,
+            "exhaustive_list": {
+                k: v for k, v in _mapping(_mapping(documented.get("validation")).get("exhaustive_evidence_expansion")).items()
+                if k in {"activated", "reason", "base_count", "fetched_count", "added_count", "final_count"}
+            } or None,
+        },
         "answer_generated": bool(str(answer.get("text") or "").strip()),
         "answer_mode": answer.get("mode"),
         "knowledge_used": answer.get("knowledge_used"),
