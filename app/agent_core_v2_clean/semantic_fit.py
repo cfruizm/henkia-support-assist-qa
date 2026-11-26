@@ -1,5 +1,6 @@
 from __future__ import annotations
 import copy, hashlib, re, unicodedata
+from .text_stems import collapse_by_stem, stem_index, term_matches
 
 VERSION = "semantic_evidence_fit_v8_query_provenance"
 STOP = {"para","como","que","del","las","los","una","uno","con","por","sin","antes","debo","debe","deben","en","el","la","y","o","how","what","the","and","for","from","with","this","that","before","after","into","using","is","are","to","configure","configurar","explicar","realizar","aplicar","revisar","necesito","quiero"}
@@ -27,6 +28,11 @@ def _terms(value):
   if raw & variants:out.add("concept:"+concept)
  return out
 
+_FILE_EXTENSIONS={"pdf","docx","doc","xlsx","xls","pptx","ppt","html","htm","txt","md"}
+def _collapse_terms(terms):
+ concepts={x for x in terms if x.startswith("concept:")}
+ return collapse_by_stem(terms-concepts)|concepts
+
 def _identity(item):return str(item.get("url") or item.get("source") or (item.get("metadata") or {}).get("canonical_url") or item.get("title") or "")
 def _chunk_identity(item):return "|".join((_identity(item),str(item.get("page") or ""),_norm(item.get("text") or "")[:240]))
 def _document_terms(item):
@@ -39,14 +45,21 @@ def _group_key(item):return _identity(item) or str(item.get("title") or "")
 def evaluate_item(item,query_text,fields=None,answer_context=None):
  fields=fields or {};answer_context=answer_context or {};details=fields.get("details") or {}
  stable=" ".join(str(x or "") for x in (query_text,fields.get("goal"),fields.get("contextual_operation"),fields.get("current_message")," ".join(str(v) for v in details.values())))
- q=_terms(stable);d=_document_terms(item);title_terms=_terms(item.get("title"));overlap=q&d;title_overlap=q&title_terms
+ q=_terms(stable);d=_document_terms(item);title_terms=_terms(item.get("title"))
+ # Stem-aware matching: word forms of one root count once and match each other
+ # (analiza/analizar, instala/installation), so a long bilingual query is not diluted.
+ q=_collapse_terms(q);d_index=stem_index({x for x in d if not x.startswith("concept:")});title_index=stem_index({x for x in title_terms if not x.startswith("concept:")})
+ overlap={x for x in q if (x in d) if x.startswith("concept:")}|{x for x in q if not x.startswith("concept:") and term_matches(x,d_index)}
+ title_overlap={x for x in q if (x in title_terms) if x.startswith("concept:")}|{x for x in q if not x.startswith("concept:") and term_matches(x,title_index)}
  concept_q={x for x in q if x.startswith("concept:")};concept_match=concept_q&d
  coverage=len(overlap)/max(1,len(q));title_coverage=len(title_overlap)/max(1,len(q));concept_coverage=len(concept_match)/max(1,len(concept_q)) if concept_q else 0.0
  previous_ids=set(answer_context.get("source_identities") or []);follow=(fields.get("topic_relation") in {"same_topic","same_topic_refinement"} and fields.get("user_act") in {"follow_up","answer_to_question","request_elaboration","attempt_result","reported_failure","answer","confirmation"});continuity=0.20 if follow and _identity(item) in previous_ids else 0.0
  specific=_specificity(item);confirmed=" ".join(str(v).casefold() for v in details.values());product= specific["product"]
  product_bonus=0.12 if product and any(part and part in confirmed for part in re.split(r"[_\s-]+",product)) else 0.0
  # Penalize scope-heavy titles only when their distinctive terms are neither in the query nor in the previous answer context.
- prior_terms=_terms(answer_context.get("main_text_excerpt") or "");distinct={x for x in specific["title_terms"] if not x.startswith("concept:")} - {x for x in q if not x.startswith("concept:")} - {x for x in prior_terms if not x.startswith("concept:")}
+ prior_terms=_terms(answer_context.get("main_text_excerpt") or "");query_index=stem_index({x for x in q if not x.startswith("concept:")})
+ # Codes and versions (in0504, v1) and file extensions are identifiers, not scope words.
+ distinct={x for x in specific["title_terms"] if not x.startswith("concept:") and not any(ch.isdigit() for ch in x) and x not in _FILE_EXTENSIONS and not term_matches(x,query_index)} - {x for x in prior_terms if not x.startswith("concept:")}
  query_concepts={x for x in q if x.startswith("concept:")};document_concepts={x for x in d if x.startswith("concept:")}
  # Only meaning-changing qualifiers are restrictive. Context concepts such as user, device, printing, security or configuration must not be punished.
  restrictive={"concept:cost"};unrequested_concepts=(document_concepts-query_concepts)&restrictive

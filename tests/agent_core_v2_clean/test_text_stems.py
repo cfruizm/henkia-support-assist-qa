@@ -54,3 +54,16 @@ def test_generic_verb_alone_does_not_authorize_unrelated_article():
                      "subject_origin": "current_message", "reference_relation": "none"}
     verdict = apply_unified_evidence_verdict(retrieval, "¿Cómo cambio el idioma del teclado en Platform Alpha?", understanding)["evidence_verdict"]
     assert not verdict["accepted"], verdict
+
+
+def test_semantic_fit_ignores_codes_and_extensions_and_matches_word_forms():
+    from app.agent_core_v2_clean.semantic_fit import evaluate_item
+
+    item = {"title": "IN0504-6_V1 INSTRUCTIVO USO DASHBOARD ALPHA - STREAMLIT.pdf",
+            "text": "Use los filtros del dashboard para analizar la operación por cliente y exporte los datos."}
+    fields = {"goal": "Explicar cómo analizar el dashboard de control de operación de Alpha", "intent": "procedural",
+              "current_message": "¿Cómo se analiza el dashboard de control de operación de Alpha?"}
+    fit = evaluate_item(item, "¿Cómo se analiza el dashboard de control de operación de Alpha?", fields)
+    assert "analiza" in fit["matched_terms"] or "analizar" in fit["matched_terms"]
+    assert not any(any(ch.isdigit() for ch in t) or t == "pdf" for t in fit["unconfirmed_title_terms"])
+    assert fit["score"] >= 0.15, fit
