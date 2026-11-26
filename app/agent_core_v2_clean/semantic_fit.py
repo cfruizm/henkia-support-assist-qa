@@ -143,6 +143,9 @@ def _compact_evidence_row(item):
                          "canonical_url", "source_url", "source_group",
                          "vendor", "source_type", "title",
                          "source_access", "access", "organization",
+                         # Retrieval provider provenance (e.g. henkia_ke) so
+                         # carried evidence remains attributable across turns.
+                         "provider",
                      }},
     }
 

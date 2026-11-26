@@ -7,6 +7,7 @@ import json
 MODULES = (
     "tests.agent_core_v2_clean.test_canonical_frame_continuity",
     "tests.agent_core_v2_clean.test_runtime_memory_audit",
+    "tests.agent_core_v2_clean.test_ke_shadow_isolation",
 )
 
 

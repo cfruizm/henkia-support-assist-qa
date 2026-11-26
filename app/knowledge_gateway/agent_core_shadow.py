@@ -4,12 +4,26 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Callable, Mapping
 
-from app.agent_core_v2_clean.semantic_fit import apply_semantic_fit
+from app.agent_core_v2_clean.semantic_fit import apply_semantic_fit, capture_answer_context
 from app.agent_core_v2_clean.unified_evidence_authority import apply_unified_evidence_verdict
 from app.agent_core_v2_clean.documentation_limitation import classify as classify_documentation_limitation
 from app.agent_core_v2_clean.decision_observability import attach_retrieval
+from app.agent_core_v2_clean.document_continuity import continuity_authority
+from app.agent_core_v2_clean.guidance_action_filter import sanitize_answer_context
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Shadow-only conversation context: the answer context produced by the previous
+# KE shadow answer. The published route keeps using store["answer_context"].
+SHADOW_CONTEXT_KEY = "ke_shadow_answer_context"
+
+# Only these keys of the published (local Chroma) retrieval are reused by the
+# shadow route. Everything evidence-related is rebuilt from KE rows so local
+# evidence can never reach the shadow composers.
+_BASE_RETRIEVAL_KEYS = ("query", "_case_context", "pre_retrieval_boundary")
+
+# Retrieval keys that may carry evidence items into a composer.
+_EVIDENCE_KEYS = ("evidence", "generation_evidence", "diagnostic_evidence")
 
 
 def _mapping(value: Any) -> dict:
@@ -65,13 +79,37 @@ def ke_evidence_rows(normalized_result: Mapping[str, Any]) -> list[dict]:
     return evidence
 
 
-def build_shadow_retrieval(result: Mapping[str, Any], message: str) -> dict:
+def shadow_continuity(result: Mapping[str, Any], previous_shadow_context: Mapping[str, Any] | None) -> dict:
+    """Resolve document continuity against the previous KE shadow answer only."""
+    return continuity_authority(
+        _mapping(result.get("understanding")),
+        _mapping(result.get("topic_boundary")),
+        _mapping(previous_shadow_context),
+    )
+
+
+def build_shadow_retrieval(
+    result: Mapping[str, Any],
+    message: str,
+    answer_context: Mapping[str, Any] | None = None,
+    continuity: Mapping[str, Any] | None = None,
+) -> dict:
+    """Build the shadow retrieval from KE rows plus the shadow's own context.
+
+    ``answer_context`` must come from the KE shadow ledger (or be empty); the
+    published route's ``_answer_context`` is never reused because it carries
+    local Chroma evidence from previous turns.
+    """
     comparison = _mapping(result.get("knowledge_comparison"))
     normalized = _mapping(comparison.get("normalized_result"))
-    base = deepcopy(_mapping(result.get("retrieval")))
+    published = _mapping(result.get("retrieval"))
+    base = {key: deepcopy(published[key]) for key in _BASE_RETRIEVAL_KEYS if key in published}
     evidence = ke_evidence_rows(normalized)
     query = deepcopy(_mapping(base.get("query")))
     query.setdefault("text", str(comparison.get("query") or message or "").strip())
+    fields = query.get("fields")
+    if isinstance(fields, dict) and continuity is not None:
+        fields["previous_evidence_role"] = _mapping(continuity).get("previous_evidence_role") or "none"
     groups = []
     seen = set()
     for item in evidence:
@@ -83,6 +121,7 @@ def build_shadow_retrieval(result: Mapping[str, Any], message: str) -> dict:
     retrieval = {
         **base,
         "enabled": True,
+        "llm_called": False,
         "ok": normalized.get("http_status") == 200 and not normalized.get("error"),
         "adapter": "henkia_knowledge_engine",
         "provider": "henkia_ke",
@@ -102,7 +141,7 @@ def build_shadow_retrieval(result: Mapping[str, Any], message: str) -> dict:
             "preselected_document": None,
         },
     }
-    answer_context = deepcopy(base.get("_answer_context") or {})
+    answer_context = deepcopy(_mapping(answer_context))
     retrieval["_answer_context"] = answer_context
     retrieval = apply_semantic_fit(retrieval, answer_context)
     retrieval["_answer_context"] = answer_context
@@ -130,6 +169,35 @@ def _route_summary(route_result: Mapping[str, Any], retrieval: Mapping[str, Any]
         "knowledge_used": answer.get("knowledge_used"),
         "documented_answer": documented,
         "answer": deepcopy(answer),
+    }
+
+
+def _is_ke_item(item: Any) -> bool:
+    metadata = _mapping(_mapping(item).get("metadata"))
+    return metadata.get("provider") == "henkia_ke"
+
+
+def isolation_report(retrieval: Mapping[str, Any]) -> dict:
+    """Count evidence items in the shadow route that did not come from KE."""
+    retrieval = _mapping(retrieval)
+    groups = {key: list(retrieval.get(key) or []) for key in _EVIDENCE_KEYS}
+    groups["selected_evidence"] = list(_mapping(retrieval.get("evidence_verdict")).get("selected_evidence") or [])
+    context = _mapping(retrieval.get("_answer_context"))
+    groups["answer_context_ledger"] = list(
+        context.get("active_document_evidence_ledger") or context.get("cited_evidence") or []
+    )
+    non_ke = {}
+    for name, items in groups.items():
+        foreign = [item for item in items if not _is_ke_item(item)]
+        if foreign:
+            non_ke[name] = [
+                str(_mapping(item).get("title") or _mapping(item).get("source") or "")[:120] for item in foreign[:5]
+            ]
+    return {
+        "checked_groups": sorted(groups),
+        "non_ke_item_count": sum(len(v) for v in non_ke.values()),
+        "non_ke_items": non_ke,
+        "isolated": not non_ke,
     }
 
 
@@ -163,9 +231,16 @@ def execute(result: dict, message: str, config: Any, session: Any, budget: Any, 
         block["provider_error"] = deepcopy(normalized.get("error"))
         return block
     try:
+        previous_context = _mapping(store.get(SHADOW_CONTEXT_KEY))
         shadow_result = deepcopy(result)
         shadow_store = deepcopy(dict(store))
-        shadow_retrieval = build_shadow_retrieval(shadow_result, message)
+        # Composers that read the session answer context see the shadow's own.
+        shadow_store["answer_context"] = deepcopy(previous_context)
+        continuity = shadow_continuity(shadow_result, previous_context)
+        shadow_result["document_continuity"] = {k: v for k, v in continuity.items() if k != "answer_context"}
+        shadow_retrieval = build_shadow_retrieval(
+            shadow_result, message, continuity.get("answer_context") or {}, continuity
+        )
         shadow_result["retrieval"] = shadow_retrieval
         shadow_result["answer"] = {"text": "", "mode": "ke_shadow_pending", "knowledge_used": False}
         shadow_result.pop("documented_answer", None)
@@ -175,6 +250,22 @@ def execute(result: dict, message: str, config: Any, session: Any, budget: Any, 
         )
         local_answer = _mapping(result.get("answer"))
         route = _route_summary(shadow_result, shadow_retrieval)
+        isolation = isolation_report(_mapping(shadow_result.get("retrieval")) or shadow_retrieval)
+        next_context = sanitize_answer_context(capture_answer_context(shadow_result, previous_context))
+        if next_context and isinstance(store, dict):
+            # Shadow-only key; the published answer context is never touched.
+            store[SHADOW_CONTEXT_KEY] = next_context
+        block["context"] = {
+            "source": "ke_shadow_ledger" if previous_context else "none",
+            "same_topic": bool(continuity.get("same_topic")),
+            "primary": bool(continuity.get("primary")),
+            "previous_evidence_role": continuity.get("previous_evidence_role"),
+            "ledger_items_before": len(
+                previous_context.get("active_document_evidence_ledger") or previous_context.get("cited_evidence") or []
+            ),
+            "ledger_updated": bool(next_context),
+        }
+        block["isolation"] = isolation
         block.update({
             "executed": True,
             "ke_route": route,
