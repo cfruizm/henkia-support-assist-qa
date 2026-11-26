@@ -17,6 +17,7 @@ CACHE_LIMITS={
 MAX_EVIDENCE_ITEMS=6
 MAX_EVIDENCE_TEXT=700
 MAX_EXCERPT=900
+MAX_SHADOW_ANSWER=4000
 
 def _json_bytes(value):
  try:return len(json.dumps(value,ensure_ascii=False,separators=(",",":")).encode("utf-8"))
@@ -48,9 +49,29 @@ def _compact_answer_context(value):
  c["delivered_guidance"]=[deepcopy(x) for x in (c.get("delivered_guidance") or [])[-10:]]
  return c
 
+def _compact_ke_shadow(block):
+    """Keep the KE shadow comparison, drop composer traces and heavy diagnostics.
+
+    The shadow answer text is kept (bounded) because KE evaluation compares it
+    against the published answer, which the audit keeps in full.
+    """
+    b = deepcopy(block or {})
+    b.pop("traces", None)
+    route = b.get("ke_route")
+    if isinstance(route, dict):
+        route.pop("documented_answer", None)
+        answer = route.get("answer")
+        if isinstance(answer, dict):
+            text = str(answer.get("text") or "")
+            if len(text) > MAX_SHADOW_ANSWER:
+                answer["text"] = text[:MAX_SHADOW_ANSWER]
+                answer["text_truncated"] = True
+    return b
+
 def compact_turn(result):
  out=deepcopy(result or {})
  if "retrieval" in out:out["retrieval"]=_compact_retrieval(out.get("retrieval"))
+ if "agent_core_ke_shadow" in out:out["agent_core_ke_shadow"]=_compact_ke_shadow(out.get("agent_core_ke_shadow"))
  if "answer_context" in out:out["answer_context"]=_compact_answer_context(out.get("answer_context"))
  plan=out.get("canonical_response_plan") or {}
  if plan:
@@ -79,7 +100,7 @@ def _trim_cache(cache,limit):
 def _audit_turn(value):
  row=compact_turn(value)
  # Audit exports must preserve causal traces even when runtime memory evicts old turns.
- keep=("input","state_before","understanding","understanding_contract","goal_update_normalization","state_after","decision","answer","retrieval","documented_answer","procedural_answer","internal_knowledge","escalation","provider_trace","turn_metrics","execution","functional_events","error","runtime_compaction","resource_observability","resource_checkpoint_trace","decision_trace","publication_ledger","topic_boundary","entity_frame","qa_shadow","knowledge_comparison")
+ keep=("input","state_before","understanding","understanding_contract","goal_update_normalization","state_after","decision","answer","retrieval","documented_answer","procedural_answer","internal_knowledge","escalation","provider_trace","turn_metrics","execution","functional_events","error","runtime_compaction","resource_observability","resource_checkpoint_trace","decision_trace","publication_ledger","topic_boundary","entity_frame","qa_shadow","knowledge_comparison","agent_core_ke_shadow")
  return {key:deepcopy(row.get(key)) for key in keep if row.get(key) is not None}
 
 def enforce_runtime_memory_limits(store):

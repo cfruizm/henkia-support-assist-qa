@@ -4,7 +4,10 @@ import importlib
 import inspect
 import json
 
-MODULES = ("tests.agent_core_v2_clean.test_canonical_frame_continuity",)
+MODULES = (
+    "tests.agent_core_v2_clean.test_canonical_frame_continuity",
+    "tests.agent_core_v2_clean.test_runtime_memory_audit",
+)
 
 
 def run() -> dict:

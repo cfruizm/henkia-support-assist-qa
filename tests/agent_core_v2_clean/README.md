@@ -10,5 +10,5 @@ This directory contains current deterministic behavioral tests.
 Run the current unit set with:
 
 ```bash
-python tests/agent_core_v2_clean/run_unit_checks.py
+python -m tests.agent_core_v2_clean.run_unit_checks
 ```
