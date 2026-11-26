@@ -473,7 +473,10 @@ class DocumentedAnswerComposer:
             text, cited = partial_text, partial_cited
         cited_pages = {str(x.get("page") or "") for x in evidence if str(x.get("id")) in cited and x.get("page") not in (None, "")}
         available_pages = {str(x.get("page") or "") for x in evidence if x.get("page") not in (None, "")}
-        required_page_coverage = min(3, len(available_pages)) if requirements else min(2, len(available_pages)) if conceptual else 1
+        # Breadth heuristic: a requirements answer should draw on several pages, but a
+        # narrow request (one table or setting) is complete with fewer. Require half of
+        # the available pages, capped at 3, instead of a fixed minimum of 3.
+        required_page_coverage = min(3, max(1, -(-len(available_pages) // 2))) if requirements else min(2, len(available_pages)) if conceptual else 1
         complete_page_coverage = bool(cited) if not available_pages else len(cited_pages) >= required_page_coverage
         partial_page_coverage = bool(cited) and (safe_partial or (available_pages and not complete_page_coverage))
         page_coverage_valid = complete_page_coverage or partial_page_coverage
@@ -519,7 +522,8 @@ class DocumentedAnswerComposer:
             text += "\n\n> Cobertura documental parcial: la fuente recuperada documenta una capacidad específica, no una definición general completa."
         self.validation["published_partial"] = bool(valid and (safe_partial or coverage_partial or authority_partial))
         self.validation["conceptual_authority_partial_terminal"] = authority_partial
-        partial = safe_partial or coverage_partial or negative_claim_removed or authority_partial
+        # A removed contradicted negative claim is a repair, not missing coverage.
+        partial = safe_partial or coverage_partial or authority_partial
         finish = ("safe_partial" if safe_partial else "coverage_partial" if coverage_partial
                   else "conceptual_authority_partial" if authority_partial
                   else "negative_claim_repaired" if negative_claim_removed else result.finish_reason)

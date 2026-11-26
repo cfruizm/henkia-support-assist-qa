@@ -168,10 +168,12 @@ class ProceduralAnswerComposer:
   if not ok and not safe_partial and not coverage_partial:return AgentResponse("La estructura o las citas no superaron la validación. No mostraré instrucciones sin respaldo.","procedural_citation_guard",False,r.provider,r.model,r.usage,r.finish_reason)
   text=strip_generated_source_footer(text)
   if safe_partial:text+="\n\n> **Respuesta parcial:** la generación terminó antes de completar toda la respuesta. Se muestra únicamente el contenido completo y citado obtenido antes del corte."
-  elif coverage_partial:text+="\n\n> **Cobertura documental parcial:** se retiraron afirmaciones de ausencia que no pudieron validarse frente a la evidencia recuperada. El contenido visible conserva únicamente afirmaciones completas y citadas."
+  # Removing an unverifiable "not documented" claim makes the answer more accurate,
+  # not incomplete: keep it in diagnostics without a user-facing partial banner.
   footer=compact_sources(evidence,cited)
   if footer:text+="\n\n"+footer
-  partial=bool(safe_partial or coverage_partial)
+  partial=bool(safe_partial)
   self.validation["transparent_partial_publication"]=partial
-  self.validation["partial_reason"]="generation_truncated" if safe_partial else "unverified_absence_removed" if coverage_partial else None
+  self.validation["unverified_absence_removed"]=bool(coverage_partial)
+  self.validation["partial_reason"]="generation_truncated" if safe_partial else None
   return AgentResponse(text,"procedural_documented_answer_partial" if partial else "procedural_documented_answer",True,r.provider,r.model,r.usage,"safe_partial" if partial else r.finish_reason)
