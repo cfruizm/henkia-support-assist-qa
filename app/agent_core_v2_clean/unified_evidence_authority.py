@@ -3,6 +3,8 @@ from copy import deepcopy
 import re
 import unicodedata
 
+from .operation_bridge import FILLERS, QUALIFIERS, present_terms
+
 _GENERIC = {
     "como", "para", "una", "uno", "unos", "unas", "que", "cual", "cuales",
     "existen", "documentados", "documentacion", "informacion", "usuario",
@@ -130,8 +132,10 @@ def _request_text(message, understanding, retrieval):
 def _fit(item, wanted):
     title = _tokens(item.get("title"))
     content = title | _tokens(item.get("text"))
-    covered = wanted & content
-    title_hits = wanted & title
+    # Cross-language aware: a Spanish operation term also counts when its English
+    # equivalent is present (operation_bridge; product-neutral).
+    covered = present_terms(wanted, content)
+    title_hits = present_terms(wanted, title)
     semantic = float((item.get("semantic_fit") or {}).get("score", 0) or 0)
     return {
         "coverage": len(covered) / max(1, len(wanted)),
@@ -471,7 +475,7 @@ def apply_unified_evidence_verdict(retrieval, message, understanding):
         target_terms = wanted - _OPERATION
         available_title = _tokens(best.get("title"))
         available = available_title | _tokens(best.get("text"))
-        target_ok = not target_terms or bool(target_terms & available)
+        target_ok = not target_terms or bool(present_terms(target_terms, available))
 
         # Separate the confirmed subject from the requested operation/object.
         # A title that only repeats the product name must not authorize an article
@@ -483,9 +487,11 @@ def apply_unified_evidence_verdict(retrieval, message, understanding):
             (understanding or {}).get("canonical_subject"),
             details.get("subject"), details.get("product"), details.get("platform"),
         )))
-        operation_terms = wanted - subject_terms
-        title_operation_hits = operation_terms & available_title
-        content_operation_hits = operation_terms & available
+        # Organizational qualifiers ("aprobado") and function words are never
+        # stated by vendor documentation, so they are not required dimensions.
+        operation_terms = wanted - subject_terms - QUALIFIERS - FILLERS
+        title_operation_hits = present_terms(operation_terms, available_title)
+        content_operation_hits = present_terms(operation_terms, available)
         operation_aligned = not operation_terms or bool(content_operation_hits)
 
         direct_title = best_fit["title_hit_count"] >= 2 and bool(title_operation_hits)
