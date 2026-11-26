@@ -1,9 +1,24 @@
 import json
 import re
 import unicodedata
+from copy import deepcopy
+from app.llm_gateway.schema_utils import make_strict
 from .contracts import UNDERSTANDING_SCHEMA
 from .models import TurnUnderstanding
 from .memory import compact_context,normalize_goal_updates
+
+# goal_updates was a free-form string map, which strict structured-output modes
+# cannot enforce. These are the keys the core actually reads; all nullable.
+GOAL_UPDATE_KEYS=("subject","product","platform","component","operation","method","focus","document_object","detail","symptom","observation","affected_scope","attempted_action","attempt_result","version","error_code")
+
+def _strict_understanding_schema():
+ schema=deepcopy(UNDERSTANDING_SCHEMA)
+ schema["properties"]["goal_updates"]={"type":"object","properties":{key:{"type":["string","null"]} for key in GOAL_UPDATE_KEYS},"required":list(GOAL_UPDATE_KEYS)}
+ return make_strict(schema)
+
+STRICT_UNDERSTANDING_SCHEMA=_strict_understanding_schema()
+# Keys whose null value means "not provided" and must fall back to the contract default.
+_NULL_MEANS_ABSENT={"user_act","intent","topic_relation","domain_relevance","current_goal","goal_complete","goal_updates","case_updates","needs_clarification","should_retrieve","confidence","reasoning_summary","reference_relation","requested_workflow"}
 
 _SOCIAL_CORE={"hola","buenas","buenos","saludos","hello","hi","hey","gracias","thanks","thank","adios","chao","bye"}
 _SOCIAL_MODIFIERS={"muchas","muchisimas","mil","muy","dias","tardes","noches","you"}
@@ -26,7 +41,7 @@ def _can_normalize_terminal_social(message,understanding):
 SYSTEM="""Semantic understanding for an enterprise printing-support assistant. Interpret the current message using memory and the last assistant question. The current_goal must express the current request, not copy an earlier operation. Distinguish conceptual, procedural, requirements and troubleshooting. Use case_history when the user asks what actions, observations, results or assistant recommendations are already recorded in the active support case, or asks to distinguish performed actions from merely suggested guidance. case_history is answered from structured conversation state: set should_retrieve false, needs_clarification false, requested_workflow none, and do not add case_updates for the request itself. Use requirements for prerequisites, compatibility, constraints or conditions; use procedural for execution steps. A changed operation about the same subject refines the goal and remains same_topic. request_elaboration is valid only when the message depends on an active goal or last assistant question. answer_to_question supplies requested information. Put symptoms and diagnostic facts in case_updates. Clarify only when one missing fact is indispensable. A clear conceptual request never needs clarification. Return one complete JSON object matching the schema. No fields outside the schema. Extract canonical_subject as the product, platform, component or technical entity governing the request. Never copy the full request. subject_origin is current_message only when explicit, otherwise conversation_memory. reference_relation is previous_subject when returning to the previously active entity, current_subject when referring to the active entity, otherwise none. A changed operation does not change canonical_subject. An explicit different subject creates new_topic. Keep reasoning_summary under 20 words. requested_workflow is an independent operational workflow contract. Use start_escalation only when the user actually requests transfer or escalation of the current support case. A conceptual question about escalation, a request to explain escalation, or generic mention of escalation must use none. Use cancel_escalation, suspend_escalation, resume_escalation or confirm_escalation only when the user requests that lifecycle action. Do not infer workflow actions from technical intent alone. When a troubleshooting message contains completed validations and an observed outcome, preserve the full cardinality of the user report: identify every semantically distinct completed action and emit one attempted_action case update for each action. If one observed result applies to several completed actions, copy that result and its outcome to every corresponding attempted_action. This is mandatory even when the result is expressed after the actions in a separate clause or sentence. A persistent failure after completed actions is an observed unchanged result, not an unknown result. If the same report states that the issue was resolved, improved or worsened, apply that stated outcome instead. Never invent an outcome when the message gives no post-action result. If the actions cannot be separated responsibly, preserve them together as one compound attempted_action instead of omitting any action. Never collapse several confirmed actions into only the last action. For each attempted_action, value is the complete action, result is the observed result, and outcome is resolved, improved, unchanged, worsened or unknown. Execution of an action is not a successful outcome. If the failure continues, outcome is unchanged. When an active support case exists and a same-topic message reports a completed check plus the observed state, classify the turn as troubleshooting attempt_result and emit attempted_action with action, result and outcome; do not reduce the complete check to a generic observation. Map a reported affected population or quantity to affected_scope. Do not duplicate the same action in multiple case updates. Domain scope is strict: mark out_of_scope for independent requests that do not ask for technical support, operation, configuration, troubleshooting, documentation, assets, consumables or processes of the enterprise printing service. Do not treat a public figure, entertainment topic, general knowledge request, copyrighted-content request or other external subject as in scope merely because the message casually adds a printing verb. A bare or contrived association without a concrete technical object, symptom, operation or support goal remains out_of_scope. Out-of-scope turns must set should_retrieve false, needs_clarification false and requested_workflow none."""
 REQUIRED={"requested_workflow","user_act","intent","topic_relation","domain_relevance","current_goal","goal_complete","goal_updates","case_updates","needs_clarification","clarification_target","should_retrieve","confidence","reasoning_summary"}
 ALLOWED=set(REQUIRED)|{"canonical_subject","subject_origin","reference_relation"}
-ALIASES={"clarification_needed":"needs_clarification","clarification_question":"clarification_target"}
+ALIASES={"clarification_needed":"needs_clarification","clarification_question":"clarification_target","goal_type":"intent"}
 SEMANTIC_FLAGS={"request_elaboration":"request_elaboration","answer_to_question":"answer_to_question","case_history":"case_history"}
 
 def _semantic_text(value):
@@ -101,6 +116,10 @@ class ConversationUnderstanding:
   if a<0 or b<a:raise ValueError("json_object_missing")
   raw=json.loads(text[a:b+1])
   if not isinstance(raw,dict) or not raw:raise ValueError("empty_object")
+  # Strict schemas send optional fields as null; null means "not provided".
+  for key in [k for k,v in raw.items() if v is None and k in _NULL_MEANS_ABSENT]:raw.pop(key)
+  if isinstance(raw.get("goal_updates"),dict):raw["goal_updates"]={k:v for k,v in raw["goal_updates"].items() if v not in (None,"")}
+  if isinstance(raw.get("case_updates"),list):raw["case_updates"]=[{k:v for k,v in item.items() if v is not None} if isinstance(item,dict) else item for item in raw["case_updates"]]
   aliases={}
   for src,dst in ALIASES.items():
    if dst not in raw and src in raw:raw[dst]=raw[src];aliases[src]=dst
@@ -190,7 +209,7 @@ class ConversationUnderstanding:
   self.normalization.setdefault("structural_corrections",[]);self.normalization["structural_corrections"].extend(corrections);return x
  def interpret(self,message,memory):
   from app.llm_gateway.models import LLMRequest
-  req=lambda payload,purpose:self.gateway.complete(LLMRequest([{"role":"system","content":SYSTEM},{"role":"user","content":json.dumps(payload,ensure_ascii=False,separators=(",",":"))}],purpose,self.max_tokens,0.,UNDERSTANDING_SCHEMA))
+  req=lambda payload,purpose:self.gateway.complete(LLMRequest([{"role":"system","content":SYSTEM},{"role":"user","content":json.dumps(payload,ensure_ascii=False,separators=(",",":"))}],purpose,self.max_tokens,0.,STRICT_UNDERSTANDING_SCHEMA))
   r=req({"message":message,"context":compact_context(memory)},"agent_core_v2_clean_understanding");self.last_provider_result=r.to_dict();self.contract_valid=False;self.validation_error=None;self.normalization={"removed_goal_update_keys":[]}
   if not r.ok:self.validation_error="provider_error:"+str(r.error_code or "unknown");return self._degraded_current(message,memory,self.validation_error)
   try:x=self._parse(r.text);self.contract_valid=True;return self._normalize(x,memory,message)

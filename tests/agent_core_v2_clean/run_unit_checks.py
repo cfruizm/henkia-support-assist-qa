@@ -11,6 +11,7 @@ MODULES = (
     "tests.agent_core_v2_clean.test_turn_recovery",
     "tests.agent_core_v2_clean.test_understanding_contract",
     "tests.agent_core_v2_clean.test_cross_language_authority",
+    "tests.agent_core_v2_clean.test_strict_schema",
 )
 
 
