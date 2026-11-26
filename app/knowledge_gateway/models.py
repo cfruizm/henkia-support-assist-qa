@@ -9,7 +9,7 @@ class EvidenceItem:
     chunk_id:str|None=None; ordinal:int|str|None=None; document_kind:str|None=None
     document_date:str|None=None; page:str|None=None; section:str|None=None
     reference_url:str|None=None; file_id:str|None=None; document_uri:str|None=None
-    content_truncated:bool=False
+    content_truncated:bool=False; knowledge_base_id:str|None=None
     def to_dict(self)->dict[str,Any]:return asdict(self)
 @dataclass
 class SearchResult:

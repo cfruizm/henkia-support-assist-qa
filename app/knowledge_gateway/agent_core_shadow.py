@@ -53,6 +53,7 @@ def ke_evidence_rows(normalized_result: Mapping[str, Any]) -> list[dict]:
             "source_name": source_name,
             "file_id": row.get("file_id"),
             "document_uri": row.get("document_uri"),
+            "knowledge_base_id": row.get("knowledge_base_id"),
             "chunk_id": row.get("chunk_id"),
             "ordinal": row.get("ordinal"),
             "document_kind": row.get("document_kind"),
