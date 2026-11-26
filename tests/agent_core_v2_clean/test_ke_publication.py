@@ -121,3 +121,39 @@ def test_execute_complement_never_replaces_a_documented_local_answer():
                     _runner("documented_answer"))
     assert not block["publication"]["applied"]
     assert result["answer"]["text"] == "Respuesta publicada [R1]."
+
+
+def test_numbered_heading_after_long_list_is_not_split():
+    from app.agent_core_v2_clean.visible_answer import format_visible_answer
+
+    bullets = "\n".join(f"*   **Elemento {i}:** descripción extensa del componente número {i} del tablero [R5]." for i in range(8))
+    raw = f"**2. Navegación**\nLa interfaz se organiza así [R5]:\n{bullets}\n\n**3. Sección Dispositivos**\nEsta sección muestra equipos [R6]."
+    text, _ = format_visible_answer(raw, "procedural_documented_answer", "documented_only", "stop")
+    assert "### 3. Sección Dispositivos" in text, text
+    assert "\n\n### 3." in text and "### 3.\n" not in text
+    assert format_visible_answer(text, "procedural_documented_answer", "documented_only", "stop")[0] == text
+
+
+def test_sharepoint_ke_document_links_the_internal_library():
+    from app.agent_core_v2_clean import source_access_policy
+    from app.agent_core_v2_clean.source_footer import compact_sources
+    from app.knowledge_gateway.agent_core_shadow import ke_evidence_rows
+
+    rows = ke_evidence_rows({"results": [{"source_name": "IN0504.pdf", "document_uri": "sharepoint://b!x/01ABC",
+                                          "content": "Acceso al tablero", "ordinal": 3}]})
+    assert rows[0]["metadata"]["source_access"] == "internal_sharepoint"
+    source_access_policy.configure_source_access({"internal_document_library_url": "https://example.sharepoint.com/lib"})
+    try:
+        rows[0]["id"] = "R1"
+        footer = compact_sources(rows, ["R1"])
+        assert "](https://example.sharepoint.com/lib) (biblioteca interna)" in footer, footer
+    finally:
+        source_access_policy.configure_source_access({})
+
+
+def test_runtime_memory_keeps_provider_of_carried_evidence():
+    from app.agent_core_v2_clean.runtime_memory import _compact_evidence
+
+    row = _compact_evidence({"id": "R1", "title": "IN0504.pdf", "text": "x",
+                             "metadata": {"provider": "henkia_ke", "source_access": "internal_sharepoint", "chunk_id": "c1"}})
+    assert row["metadata"] == {"provider": "henkia_ke", "source_access": "internal_sharepoint"}

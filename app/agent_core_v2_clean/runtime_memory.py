@@ -23,13 +23,18 @@ def _json_bytes(value):
  try:return len(json.dumps(value,ensure_ascii=False,separators=(",",":")).encode("utf-8"))
  except Exception:return 0
 
+_KEPT_METADATA=("canonical_url","source_url","product","vendor","source_type","document_family","title",
+                "provider","source_access","access","organization","source_group","knowledge_base_id","ordinal")
+
 def _compact_evidence(item):
  row={k:deepcopy(item.get(k)) for k in ("id","title","source","url","page","origin","stable_id") if item.get(k) not in (None,"")}
  text=" ".join(str(item.get("text") or "").split())
  if text:row["text"]=text[:MAX_EVIDENCE_TEXT]
  sf=item.get("semantic_fit") or {}
  if sf:row["semantic_fit"]={k:deepcopy(sf.get(k)) for k in ("score","matched_terms","title_matched_terms","concept_matches") if sf.get(k) not in (None,[],{})}
- md=item.get("metadata") or {};row["metadata"]={k:deepcopy(md.get(k)) for k in ("canonical_url","source_url","product","vendor","source_type","document_family","title") if md.get(k) not in (None,"")}
+ # provider/access/knowledge base keep carried evidence attributable (henkia_ke vs local)
+ # and let the source-access policy link internal documents on follow-up turns.
+ md=item.get("metadata") or {};row["metadata"]={k:deepcopy(md.get(k)) for k in _KEPT_METADATA if md.get(k) not in (None,"")}
  return row
 
 def _compact_retrieval(value):

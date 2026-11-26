@@ -158,6 +158,10 @@ def ke_evidence_rows(normalized_result: Mapping[str, Any]) -> list[dict]:
             "rerank_score": row.get("rerank_score"),
             "page_unknown": row.get("page") in (None, ""),
         }
+        # Connector documents (SharePoint) have a sharepoint:// URI and no web URL;
+        # mark them internal so the footer links the configured internal library.
+        if str(row.get("document_uri") or "").casefold().startswith("sharepoint://") and not reference_url.startswith(("http://", "https://")):
+            metadata["source_access"] = "internal_sharepoint"
         # page intentionally remains empty when KE does not supply a real page.
         if row.get("page") not in (None, ""):
             metadata["page"] = row.get("page")

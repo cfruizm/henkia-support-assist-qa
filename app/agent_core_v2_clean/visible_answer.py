@@ -12,7 +12,8 @@ MALFORMED_NUMBER_RE=re.compile(r"(?m)^(\s*)\*\*(\d+)([.)])\s+([^\n*].*)$")
 def _split_long(paragraph,max_chars=560):
     value=paragraph.strip()
     if len(value)<=max_chars or value.startswith(("#",">","- ","* ","```","|")) or re.match(r"^\d+[.)]\s",value):return value
-    sentences=re.split(r"(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÜÑ0-9¿¡])",value)
+    # Never split after a bare enumerator ("3. Sección"): it does not end a sentence.
+    sentences=re.split(r"(?<=[.!?])(?<!^\d\.)(?<!\s\d\.)(?<!^\d\d\.)(?<!\s\d\d\.)\s+(?=[A-ZÁÉÍÓÚÜÑ0-9¿¡])",value,flags=re.M)
     if len(sentences)<2:return value
     chunks=[];current=""
     for sentence in sentences:
@@ -62,7 +63,9 @@ def format_visible_answer(text,answer_mode=None,knowledge_mode=None,finish_reaso
     else:
         match=INTERNAL_RE.search(original)
         if match:internal=True;original=INTERNAL_RE.sub("",original).strip()
-    original=re.sub(r"(?m)^\s*\*\*(\d+[.)]\s*[^*\n]{2,100})\*\*\s*(?=\S)",lambda m:f"### {m.group(1).strip()}\n\n",original)
+    # [ \t]* (not \s*) keeps the blank line before a heading; a heading glued to the
+    # previous paragraph was later split by _split_long into "### 3." and its title.
+    original=re.sub(r"(?m)^[ \t]*\*\*(\d+[.)][ \t]*[^*\n]{2,100})\*\*\s*(?=\S)",lambda m:f"\n\n### {m.group(1).strip()}\n\n",original)
     original,incomplete=_normalize_incomplete_numbering(original)
     original=re.sub(r"(?im)\*\*(Validaciones finales|Siguiente paso|Resultado|Recomendación|Acciones|Requisitos):?\*\*\s*(?=\S)",lambda m:f"\n\n### {m.group(1)}\n\n",original)
     lines=[];in_fence=False;removed=False
@@ -84,5 +87,5 @@ def format_visible_answer(text,answer_mode=None,knowledge_mode=None,finish_reaso
     if body:sections.append(body)
     if source:sections.append(f"---\n\n*Fuente documental:* {source}")
     formatted=re.sub(r"\n{3,}","\n\n","\n\n".join(sections).strip())
-    diagnostic={"applied":formatted!=str(text or "").strip(),"version":"q6_visible_answer_v1_3","internal_warning_compacted":internal,"internal_warning_icon":"⚠️" if internal else None,"partial_notice_repositioned":bool(partial),"partial_notice_icon":"ℹ️" if partial else None,"partial_variant_normalized":bool(partial),"incomplete_numbering_found":incomplete["found"],"incomplete_numbering_strategy":incomplete["strategy"],"source_deemphasized":bool(source),"orphan_structure_removed":removed,"screen_pdf_same_markdown":True}
+    diagnostic={"applied":formatted!=str(text or "").strip(),"version":"q6_visible_answer_v1_4","internal_warning_compacted":internal,"internal_warning_icon":"⚠️" if internal else None,"partial_notice_repositioned":bool(partial),"partial_notice_icon":"ℹ️" if partial else None,"partial_variant_normalized":bool(partial),"incomplete_numbering_found":incomplete["found"],"incomplete_numbering_strategy":incomplete["strategy"],"source_deemphasized":bool(source),"orphan_structure_removed":removed,"screen_pdf_same_markdown":True}
     return formatted,diagnostic
