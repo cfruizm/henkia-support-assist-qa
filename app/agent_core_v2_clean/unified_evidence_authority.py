@@ -362,8 +362,10 @@ def _primary_continuity_selection(out,candidates,wanted):
     previous_status=str((context.get("evidence_authority") or {}).get("status") or "");rows=[]
     for position,item in enumerate(candidates):
         if _identity(item) not in identities:continue
-        available=_tokens(" ".join((str(item.get("title") or ""),str(item.get("text") or ""))));fit=_fit(item,wanted or operation_terms);semantic=float((item.get("semantic_fit") or {}).get("score",0) or 0)
-        op_hits=len(operation_terms&available);non_subject_hits=len((wanted-subject_terms)&available)
+        # Content only, matched by stem: every chunk of a document shares its title,
+        # so title words cannot tell which chunk answers the follow-up.
+        content=_tokens(str(item.get("text") or ""));fit=_fit(item,wanted or operation_terms);semantic=float((item.get("semantic_fit") or {}).get("score",0) or 0)
+        op_hits=len(present_terms(operation_terms,content));non_subject_hits=len(present_terms(wanted-subject_terms,content))
         aligned=op_hits>=2 or non_subject_hits>=2 or (op_hits>=1 and semantic>=.30) or semantic>=.42
         if previous_status=="partial" and not (op_hits>=2 or semantic>=.42):aligned=False
         if aligned:rows.append((op_hits,non_subject_hits,fit["coverage"],semantic,-position,deepcopy(item)))

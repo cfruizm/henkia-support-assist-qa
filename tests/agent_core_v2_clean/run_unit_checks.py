@@ -19,6 +19,7 @@ MODULES = (
     "tests.agent_core_v2_clean.test_ke_publication",
     "tests.agent_core_v2_clean.test_ke_document_search",
     "tests.agent_core_v2_clean.test_ke_full_document",
+    "tests.agent_core_v2_clean.test_followup_relevance",
 )
 
 
