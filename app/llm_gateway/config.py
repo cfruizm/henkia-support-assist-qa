@@ -35,6 +35,9 @@ def load_gateway_config(secrets) -> dict:
         "orchestrator_max_tokens": max(64, min(4096, int(_get(secrets, "LLM_ORCHESTRATOR_MAX_TOKENS", 220)))),
         "understanding_max_tokens": max(320, min(4096, int(_get(secrets, "LLM_UNDERSTANDING_MAX_TOKENS", 360)))),
         "answer_max_tokens": max(128, min(4096, int(_get(secrets, "LLM_ANSWER_MAX_TOKENS", 900)))),
+        # Long-form documented answers (procedures, exhaustive lists) need more room than
+        # conversational replies; a separate cap keeps short replies at answer_max_tokens.
+        "document_answer_max_tokens": max(600, min(4096, int(_get(secrets, "LLM_DOCUMENT_ANSWER_MAX_TOKENS", 1800)))),
         "evidence_judge_max_tokens": max(64, min(4096, int(_get(secrets, "LLM_EVIDENCE_JUDGE_MAX_TOKENS", 360)))),
         "providers": {
             "groq": {"api_key": _get(secrets,"GROQ_API_KEY"), "orchestrator_model": str(_get(secrets,"GROQ_ORCHESTRATOR_MODEL","qwen/qwen3.8-27b")), "answer_model": str(_get(secrets,"GROQ_ANSWER_MODEL","openai/gpt-oss-120b")), "structured_mode": structured, "base_url": "https://api.groq.com/openai/v1/chat/completions"},

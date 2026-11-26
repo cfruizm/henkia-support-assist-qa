@@ -53,6 +53,7 @@ class LLMGateway:
         if "judge" in purpose:configured=int(self.config.get("evidence_judge_max_tokens",360))
         elif "understanding" in purpose:configured=int(self.config.get("understanding_max_tokens",360))
         elif role=="orchestrator" or "orchestrator" in purpose:configured=int(self.config.get("orchestrator_max_tokens",220))
+        elif "procedural_answer" in purpose or "documented_answer" in purpose:configured=int(self.config.get("document_answer_max_tokens",1800))
         else:configured=int(self.config.get("answer_max_tokens",900))
         requested=max(1,int(request.max_tokens or configured));granted=min(requested,configured);request.max_tokens=granted
         setattr(request,"_token_debug",{"requested_max_tokens":requested,"configured_cap":configured,"effective_max_tokens":granted,"policy":"role_cap_v2_no_rolling_clamp"});return request
