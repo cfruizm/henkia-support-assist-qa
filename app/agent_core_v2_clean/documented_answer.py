@@ -11,6 +11,12 @@ from .guidance_integrity import build_guidance_integrity_contract, integrity_dia
 from .evidence_boundary import normalize_citation_groups
 from .documented_fact_coverage import augment_exhaustive_numeric_evidence,ensure_enumerated_numeric_fact_coverage,expects_exhaustive_numeric_list,numeric_enumeration_evidence_score,collect_compact_numeric_rows
 
+
+def _same_document_fetcher(query, source, k):
+    """Read-only same-document retrieval from the local vectorstore (lazy import)."""
+    from app.integration.document_expansion_adapter import retrieve_same_document
+    return retrieve_same_document(query, source, k)
+
 PROMPT_VERSION = "documented_v18_localized_conceptual_authority"
 SYSTEM = """Eres un colega de soporte empresarial de impresion. Responde unicamente con la evidencia documental suministrada y usa el idioma del usuario. Se util, directo y natural. No inventes menus, pasos, requisitos, relaciones ni funciones. Cada afirmacion factual debe terminar con una o mas citas [R#].
 
@@ -403,7 +409,10 @@ class DocumentedAnswerComposer:
         self.validation = {}
 
     def compose(self, message, understanding, retrieval):
-        retrieval, exhaustive_evidence_expansion = augment_exhaustive_numeric_evidence(retrieval, message)
+        # Same-document fetch reads the local vectorstore; the KE shadow route keeps
+        # its own evidence only, so the fetcher is disabled there.
+        fetcher = None if str((retrieval or {}).get("provider") or "") == "henkia_ke" else _same_document_fetcher
+        retrieval, exhaustive_evidence_expansion = augment_exhaustive_numeric_evidence(retrieval, message, fetcher)
         intent = str(understanding.get("intent") or "").casefold()
         requirements = intent == "requirements"
         conceptual = intent == "conceptual"

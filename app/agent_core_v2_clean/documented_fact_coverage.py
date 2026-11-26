@@ -31,14 +31,32 @@ def expects_exhaustive_numeric_list(question):
  value=_norm(question)
  return bool(any(re.search(pattern,value) for pattern in _EXHAUSTIVE_MARKERS) and _property_terms(question))
 
-def augment_exhaustive_numeric_evidence(retrieval,question):
+def _fetched_rows(fetch_same_document,question,target):
+ """Same-document fragments fetched on demand, normalized to the evidence contract."""
+ try:raw=fetch_same_document(question,target,12) or {}
+ except Exception:return []
+ rows=[]
+ for item in raw.get("evidence") or []:
+  meta=dict(item.get("metadata") or {});text=" ".join(str(item.get("text") or "").split())
+  if not text or str(item.get("source") or "")!=target:continue
+  page=meta.get("page_label") or meta.get("page") or item.get("page") or ""
+  rows.append({"title":item.get("title") or meta.get("title") or "","source":target,"url":item.get("url") or "","page":str(page),"text":text,"metadata":meta,"origin":"exhaustive_same_document_fetch"})
+ return rows
+
+def augment_exhaustive_numeric_evidence(retrieval,question,fetch_same_document=None):
  diagnostic={"activated":False,"reason":"not_exhaustive_numeric_request","selected_document":None,"base_count":0,"added_count":0,"final_count":0}
  if not expects_exhaustive_numeric_list(question):return deepcopy(retrieval or {}),diagnostic
  out=deepcopy(retrieval or {});verdict=out.get("evidence_verdict") or {}
  base=list(verdict.get("selected_evidence") or out.get("generation_evidence") or out.get("evidence") or [])
  diagnostic["base_count"]=len(base);identities=[_identity(x) for x in base if _identity(x)]
  if not identities:return out,{**diagnostic,"reason":"no_authorized_document_identity"}
- target=identities[0];diagnostic["selected_document"]=target;candidates=list(out.get("diagnostic_evidence") or []);merged=[];seen=set()
+ target=identities[0];diagnostic["selected_document"]=target;candidates=list(out.get("diagnostic_evidence") or [])
+ # The retrieval pool can be thin (e.g. a turn routed as conceptual keeps few
+ # candidates), so the table holding the requested values may be missing. When a
+ # same-document fetcher is available, read more fragments of the selected document.
+ if fetch_same_document is not None:
+  fetched=_fetched_rows(fetch_same_document,question,target);candidates+=fetched;diagnostic["fetched_count"]=len(fetched)
+ merged=[];seen=set()
  for row in base+[x for x in candidates if _identity(x)==target]:
   text=" ".join(str(row.get("text") or "").split());signature=(str(row.get("page") or ""),text.casefold())
   if not text or signature in seen:continue
