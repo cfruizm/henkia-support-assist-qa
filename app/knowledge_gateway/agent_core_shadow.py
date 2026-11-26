@@ -196,6 +196,42 @@ def apply_ke_document_order(retrieval: dict, fetcher: Callable | None = None, qu
     return retrieval
 
 
+PROBE_CACHE_KEY = "ke_document_probe_cache"
+
+
+def _probe_enabled(config: Any) -> bool:
+    getter = getattr(config, "get", lambda *_: None)
+    return str(getter("HENKIA_KE_DOCUMENT_PROBE", "false")).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def document_probe(config: Any, retrieval: Mapping[str, Any], store: Any) -> dict | None:
+    """Observational check of GET /document for the accepted KE document.
+
+    Records only status, error code, size and latency; the text is never stored,
+    published or sent to a composer. One request per document and session.
+    """
+    if not _probe_enabled(config):
+        return None
+    selected = list(_mapping(retrieval).get("generation_evidence") or [])
+    if not selected or not _is_ke_item(selected[0]):
+        return {"attempted": False, "reason": "no_accepted_ke_document"}
+    item = selected[0]
+    uri = str(item.get("source") or "")
+    kb_id = str(_mapping(item.get("metadata")).get("knowledge_base_id") or "")
+    cache = store.setdefault(PROBE_CACHE_KEY, {}) if isinstance(store, dict) else {}
+    if uri in cache:
+        return {**cache[uri], "cached": True}
+    from app.knowledge_gateway.henkia_knowledge_engine import fetch_document
+    raw = fetch_document(config, kb_id, uri)
+    summary = {
+        "attempted": True, "document": str(item.get("title") or "")[:120], "knowledge_base_id": kb_id,
+        "ok": bool(raw.get("ok")), "http_status": raw.get("http_status"), "error_code": raw.get("error_code"),
+        "chars": len(raw.get("text") or ""), "latency_ms": raw.get("latency_ms"), "cached": False,
+    }
+    cache[uri] = {k: v for k, v in summary.items() if k != "cached"}
+    return summary
+
+
 def _enabled(config: Any) -> bool:
     getter = getattr(config, "get", lambda *_: None)
     raw = getter("KE_AGENT_CORE_SHADOW_ENABLED", True)
@@ -519,6 +555,9 @@ def execute(result: dict, message: str, config: Any, session: Any, budget: Any, 
             },
             "traces": {"conceptual": conceptual_trace, "procedural": procedural_trace},
         })
+        probe = document_probe(config, shadow_retrieval, store)
+        if probe is not None:
+            block["document_probe"] = probe
         decision = complement_decision(
             block["publish_mode"], local_answer, _mapping(shadow_result.get("answer")), route, isolation
         )

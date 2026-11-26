@@ -119,3 +119,65 @@ def test_route_summary_keeps_document_reads_after_compaction():
     assert reads["exhaustive_list"] == {"activated": True, "reason": "same_document_diagnostic_fragments_added",
                                         "fetched_count": 8, "added_count": 5}
     assert "documented_answer" not in block["ke_route"]
+
+
+class _GetResponse:
+    def __init__(self, status, payload):
+        self.status_code = status
+        self.ok = 200 <= status < 300
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+def _with_fake_get(status, payload, sent):
+    def get(url, params=None, headers=None, timeout=None):
+        sent.update(url=url, params=params, headers=headers)
+        return _GetResponse(status, payload)
+    original = ke.requests.get
+    ke.requests.get = get
+    return original
+
+
+def test_fetch_document_uses_root_url_and_api_key_header():
+    sent = {}
+    original = _with_fake_get(200, {"document_name": "IN0504.pdf", "text": "texto completo"}, sent)
+    try:
+        out = ke.fetch_document({**BASE, "HENKIA_KE_KB_IDS": "kb2"}, "kb2", URI)
+    finally:
+        ke.requests.get = original
+    assert sent["url"] == "https://ke.example.test/knowledge-bases/kb2/document"
+    assert sent["params"] == {"uri": URI}
+    assert sent["headers"]["X-Api-Key"] == "test-key" and "Authorization" not in sent["headers"]
+    assert out["ok"] and out["text"] == "texto completo" and out["http_status"] == 200
+
+
+def test_fetch_document_reports_forbidden_without_text():
+    sent = {}
+    original = _with_fake_get(403, {"code": "HENKIA-RAG-1003"}, sent)
+    try:
+        out = ke.fetch_document({**BASE, "HENKIA_KE_KB_IDS": "kb2"}, "kb2", URI)
+    finally:
+        ke.requests.get = original
+    assert not out["ok"] and out["http_status"] == 403 and out["error_code"] == "HENKIA-RAG-1003" and out["text"] == ""
+
+
+def test_document_probe_is_off_by_default_cached_and_never_keeps_text():
+    from app.knowledge_gateway.agent_core_shadow import PROBE_CACHE_KEY, document_probe
+
+    retrieval = {"generation_evidence": [_ke("R1", 3)]}
+    assert document_probe({}, retrieval, {}) is None
+    sent = {}
+    original = _with_fake_get(200, {"document_name": "IN0504.pdf", "text": "x" * 500}, sent)
+    store = {}
+    config = {**BASE, "HENKIA_KE_KB_IDS": "kb2", "HENKIA_KE_DOCUMENT_PROBE": "true"}
+    try:
+        first = document_probe(config, retrieval, store)
+        sent.clear()
+        second = document_probe(config, retrieval, store)
+    finally:
+        ke.requests.get = original
+    assert first["ok"] and first["chars"] == 500 and not first["cached"]
+    assert second["cached"] and sent == {}
+    assert "text" not in first and "x" * 50 not in str(store[PROBE_CACHE_KEY])

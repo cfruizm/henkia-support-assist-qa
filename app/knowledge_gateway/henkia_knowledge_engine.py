@@ -136,3 +136,40 @@ def _search_one(query,cfg,kb_id,extra=None):
     except requests.Timeout as exc:return _error_result(query,cfg,started,status,"timeout",exc,True,"unknown")
     except req_exc.ConnectionError as exc:return _error_result(query,cfg,started,status,"connection_error",exc,True,None)
     except Exception as exc:return _error_result(query,cfg,started,status,type(exc).__name__,exc,True,None)
+
+
+def _root_url(base_url):
+    """KE root for non-/v1 endpoints (the configured base ends in /v1)."""
+    base=str(base_url or "").rstrip("/")
+    return base[:-3] if base.endswith("/v1") else base
+
+
+def fetch_document(config_obj,kb_id,document_uri):
+    """Read one KE document as text (GET /knowledge-bases/{id}/document?uri=).
+
+    The KE brings the text live from the source and authorizes by identity; the
+    service key goes in X-Api-Key (this endpoint is outside /v1). Returns a dict
+    with ok, http_status, error_code, document_name, text and latency_ms.
+    """
+    cfg=config(config_obj);started=time.perf_counter()
+    def done(ok,status=None,code=None,name=None,text=""):
+        return {"ok":ok,"http_status":status,"error_code":code,"document_name":name,"text":text,
+                "latency_ms":round((time.perf_counter()-started)*1000,3)}
+    if not cfg["enabled"] or not kb_id or not document_uri:
+        return done(False,code="disabled" if not cfg["enabled"] else "missing_document")
+    url=f'{_root_url(cfg["base_url"])}/knowledge-bases/{kb_id}/document'
+    try:
+        response=requests.get(url,params={"uri":str(document_uri)},headers={"accept":"application/json","X-Api-Key":cfg["api_key"]},
+                              timeout=(cfg["connect_timeout_seconds"],cfg["read_timeout_seconds"]))
+    except req_exc.ConnectTimeout:return done(False,code="connect_timeout")
+    except req_exc.ReadTimeout:return done(False,code="read_timeout")
+    except requests.RequestException as exc:return done(False,code=type(exc).__name__)
+    if not response.ok:
+        code="http_error"
+        try:
+            body=response.json();code=str(body.get("code") or body.get("type") or (body.get("error") or {}).get("code") or body.get("detail") or code)[:80]
+        except Exception:pass
+        return done(False,response.status_code,redact(code))
+    try:body=response.json()
+    except Exception:return done(False,response.status_code,"invalid_json")
+    return done(True,response.status_code,None,str(body.get("document_name") or ""),str(body.get("text") or ""))
