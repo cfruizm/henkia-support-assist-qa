@@ -157,3 +157,21 @@ def test_runtime_memory_keeps_provider_of_carried_evidence():
     row = _compact_evidence({"id": "R1", "title": "IN0504.pdf", "text": "x",
                              "metadata": {"provider": "henkia_ke", "source_access": "internal_sharepoint", "chunk_id": "c1"}})
     assert row["metadata"] == {"provider": "henkia_ke", "source_access": "internal_sharepoint"}
+
+
+def test_packed_evidence_footer_recovers_internal_link_from_retrieval():
+    from app.agent_core_v2_clean import source_access_policy
+    from app.agent_core_v2_clean.source_footer import compact_sources, with_source_metadata
+
+    full = {"id": "R1", "title": "IN0504.pdf", "source": "sharepoint://b!x/01ABC", "text": "x",
+            "metadata": {"provider": "henkia_ke", "source_access": "internal_sharepoint"}}
+    packed = [{"id": "R1", "title": "IN0504.pdf", "page": "", "source": "sharepoint://b!x/01ABC", "text": "x"}]
+    source_access_policy.configure_source_access({"internal_document_library_url": "https://example.sharepoint.com/lib"})
+    try:
+        assert "](https://example.sharepoint.com/lib)" not in compact_sources(packed, ["R1"])
+        footer = compact_sources(with_source_metadata(packed, {"generation_evidence": [full]}), ["R1"])
+        assert "](https://example.sharepoint.com/lib) (biblioteca interna)" in footer, footer
+        other = with_source_metadata(packed, {"generation_evidence": [dict(full, title="Otro.pdf")]})
+        assert "metadata" not in other[0]
+    finally:
+        source_access_policy.configure_source_access({})

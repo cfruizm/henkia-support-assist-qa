@@ -31,6 +31,23 @@ def _list(values):
 def _url(item):
     return display_url(item)
 
+def with_source_metadata(packed,retrieval):
+    """Restore metadata dropped by the LLM evidence pack before building a footer.
+
+    The pack keeps only id/title/page/source/text; the source-access policy needs
+    metadata (source_access, vendor) to link internal documents such as KE
+    SharePoint files. Rows are matched by id and title, never by title alone.
+    """
+    retrieval=retrieval or {};full={}
+    for key in ("generation_evidence","evidence","diagnostic_evidence"):
+        for row in retrieval.get(key) or []:
+            full.setdefault((str(row.get("id")),str(row.get("title") or "")),row)
+    out=[]
+    for item in packed or []:
+        row=full.get((str(item.get("id")),str(item.get("title") or "")))
+        out.append({**item,"metadata":dict(row.get("metadata") or {}),"url":item.get("url") or row.get("url")} if row and not item.get("metadata") else item)
+    return out
+
 def compact_sources(evidence,cited_ids):
     by_id={str(x.get("id")):x for x in evidence or []};docs=OrderedDict()
     for rid in cited_ids or []:

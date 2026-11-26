@@ -5,7 +5,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from .models import AgentResponse
-from .source_footer import compact_sources, strip_generated_source_footer
+from .source_footer import compact_sources, strip_generated_source_footer, with_source_metadata
 from .diagnostic_language import soften_diagnostic_certainty
 from .guidance_integrity import build_guidance_integrity_contract, integrity_diagnostic
 from .evidence_boundary import normalize_citation_groups
@@ -528,7 +528,7 @@ class DocumentedAnswerComposer:
             text += "\n\n> Respuesta parcial segura: el proveedor alcanzó el límite de salida. Se publicó únicamente el contenido completo y citado disponible."
         elif coverage_partial:
             text += "\n\n> Cobertura documental parcial: se publicó únicamente la orientación respaldada por las fuentes citadas."
-        footer = compact_sources(evidence, cited)
+        footer = compact_sources(with_source_metadata(evidence, retrieval), cited)
         if footer:text += "\n\n" + footer
         authority_partial = bool(conceptual_authority_publication.get("applied"))
         if authority_partial and "> Cobertura documental parcial:" not in text:

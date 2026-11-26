@@ -1,7 +1,7 @@
 from __future__ import annotations
 import hashlib,json,re,unicodedata
 from .models import AgentResponse
-from .source_footer import compact_sources, strip_generated_source_footer
+from .source_footer import compact_sources, strip_generated_source_footer, with_source_metadata
 from .diagnostic_language import soften_diagnostic_certainty
 from .guidance_integrity import build_guidance_integrity_contract, integrity_diagnostic
 PROMPT_VERSION="procedural_v22_output_budget"
@@ -172,7 +172,7 @@ class ProceduralAnswerComposer:
   if safe_partial:text+="\n\n> **Respuesta parcial:** la generación terminó antes de completar toda la respuesta. Se muestra únicamente el contenido completo y citado obtenido antes del corte."
   # Removing an unverifiable "not documented" claim makes the answer more accurate,
   # not incomplete: keep it in diagnostics without a user-facing partial banner.
-  footer=compact_sources(evidence,cited)
+  footer=compact_sources(with_source_metadata(evidence,retrieval),cited)
   if footer:text+="\n\n"+footer
   partial=bool(safe_partial)
   self.validation["transparent_partial_publication"]=partial
