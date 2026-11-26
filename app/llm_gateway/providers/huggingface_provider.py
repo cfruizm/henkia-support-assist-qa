@@ -7,6 +7,16 @@ from app.llm_gateway.errors import LLMGatewayError, normalize_error
 from app.llm_gateway.models import LLMResult
 from app.llm_gateway.providers.base import BaseProvider
 
+HF_ROUTER_BASE_URL = "https://router.huggingface.co/v1"
+
+
+def _routed_model(model, provider_name):
+    """Return the router model id, e.g. "Qwen/Qwen3.8-27B:cerebras"."""
+    model = str(model or "").strip()
+    if not provider_name or ":" in model:
+        return model
+    return f"{model}:{provider_name}"
+
 
 class HuggingFaceProvider(BaseProvider):
     def __init__(self, token, provider=None, bill_to=None, disable_thinking=True,
@@ -18,9 +28,11 @@ class HuggingFaceProvider(BaseProvider):
         self.disable_thinking = bool(disable_thinking)
         self.structured_mode = str(structured_mode or "json_schema").casefold()
         self.timeout_seconds = max(10, min(120, int(timeout_seconds)))
-        kwargs = {"token": token, "timeout": self.timeout_seconds}
-        if provider:
-            kwargs["provider"] = provider
+        # Call the HF router's OpenAI-compatible endpoint directly and select the
+        # inference provider with the "model:provider" suffix (see complete()).
+        # This skips huggingface_hub's provider-mapping lookup, which started
+        # rejecting served models ("Model X is not supported by provider Y").
+        kwargs = {"base_url": HF_ROUTER_BASE_URL, "api_key": token, "timeout": self.timeout_seconds}
         if self.bill_to:
             kwargs["bill_to"] = self.bill_to
         try:
@@ -52,7 +64,7 @@ class HuggingFaceProvider(BaseProvider):
         response_format, format_mode = self._response_format(request)
         provider_name = str(self.provider or "").strip().casefold()
         kwargs = {
-            "model": model,
+            "model": _routed_model(model, provider_name),
             "messages": [dict(message) for message in request.messages],
             "max_tokens": max(32, min(4096, int(request.max_tokens))),
             "temperature": max(1e-8, float(request.temperature)),
