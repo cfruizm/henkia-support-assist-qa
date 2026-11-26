@@ -1,7 +1,10 @@
 from __future__ import annotations
 import json
 import os
-import resource
+try:
+    import resource  # POSIX only; unavailable on Windows development machines.
+except ImportError:  # pragma: no cover - platform dependent
+    resource = None
 from .publication_observability import build_publication_ledger
 
 _MAX_SAMPLES = 64

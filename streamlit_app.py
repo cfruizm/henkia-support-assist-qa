@@ -50,8 +50,10 @@ from app.agent_core_v2_clean.budget import BudgetPolicy
 from app.agent_core_v2_clean.lab_session import (
     export_session,
     get_store,
-    process_message,
+    pending_message,
+    process_pending,
     reset_store,
+    submit_message,
 )
 from app.agent_core_v2_clean.resource_monitor_ui import render_resource_monitor
 from app.agent_core_v2_clean.source_access_policy import configure_source_access, render_latest_source_actions
@@ -164,6 +166,14 @@ else:
     render_latest_source_actions(st, store)
 
 if prompt := st.chat_input("Escribe tu consulta"):
+    submit_message(prompt, st.session_state)
+
+# A prompt stays pending until its turn completes. If a run is interrupted
+# mid-turn, the next run finds it here and processes it again.
+pending = pending_message(st.session_state)
+if pending:
+    with st.chat_message("user"):
+        st.markdown(pending["message"])
     with st.spinner("Procesando..."):
-        process_message(prompt, st.secrets, st.session_state)
+        process_pending(st.secrets, st.session_state)
     st.rerun()

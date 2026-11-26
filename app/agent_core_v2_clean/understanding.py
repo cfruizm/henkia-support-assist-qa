@@ -41,6 +41,31 @@ def _semantic_text(value):
    if text:return text
   return " ".join(x for x in (_semantic_text(item) for item in value.values()) if x)
  return " ".join(str(value).split()).strip()
+_TOPIC_RELATION_VALUES={"same_topic","same_topic_refinement","new_topic","return_to_previous","no_topic"}
+
+def _hoist_nested_schema_fields(raw,aliases):
+ """Recover schema fields a provider nested inside another object.
+
+ Without a strict JSON schema (json_object mode) providers sometimes return, e.g.,
+ topic_relation={"canonical_subject": "...", "subject_origin": "current_message",
+ "is_same_topic": false}. Those fields were silently dropped and replaced by defaults,
+ so an explicit new subject was lost. Structural only: no user vocabulary is inspected.
+ """
+ for container_key,container in list(raw.items()):
+  if not isinstance(container,dict):continue
+  for nested_key,nested_value in container.items():
+   if nested_key in ALLOWED and nested_key!=container_key and nested_key not in raw and nested_value not in (None,"",[],{}):
+    raw[nested_key]=nested_value;aliases[container_key+"."+nested_key]=nested_key
+ relation=raw.get("topic_relation")
+ if isinstance(relation,dict):
+  value=next((str(relation.get(k)) for k in ("topic_relation","relation","value","type") if str(relation.get(k) or "") in _TOPIC_RELATION_VALUES),None)
+  if value is None and isinstance(relation.get("is_same_topic"),bool):
+   value="same_topic" if relation["is_same_topic"] else "new_topic"
+  if value is not None:
+   raw["topic_relation"]=value;aliases["topic_relation:object"]="topic_relation:"+value
+  else:
+   raw.pop("topic_relation",None);aliases["topic_relation:object"]="topic_relation:dropped"
+
 class ConversationUnderstanding:
  def __init__(self,gateway,max_tokens=300):self.gateway=gateway;self.max_tokens=max(220,min(420,int(max_tokens)));self.last_provider_result={};self.contract_valid=False;self.validation_error=None;self.normalization={"removed_goal_update_keys":[]}
  def _degraded(self,memory,reason):return TurnUnderstanding("follow_up",memory.pending_goal.intent or "unknown","same_topic","uncertain",memory.pending_goal.summary or memory.active_topic or "",False,{},[],False,None,False,0.,reason,True)
@@ -79,6 +104,7 @@ class ConversationUnderstanding:
   aliases={}
   for src,dst in ALIASES.items():
    if dst not in raw and src in raw:raw[dst]=raw[src];aliases[src]=dst
+  _hoist_nested_schema_fields(raw,aliases)
   # Recover common provider schema drift before unknown fields are discarded.
   # These mappings are structural and product-agnostic; they never inspect user vocabulary.
   if "domain_relevance" not in raw and "out_of_scope" in raw:
@@ -103,6 +129,8 @@ class ConversationUnderstanding:
    facts=[x for x in facts if x];raw["goal_updates"]={"subject":facts[0]} if facts else {}
    if facts and not raw.get("current_goal"):raw["current_goal"]=facts[0]
    aliases["goal_updates:list"]="goal_updates:dict"
+  # Observability: which core semantic fields the provider omitted and were defaulted.
+  defaulted=sorted(k for k in ("user_act","intent","topic_relation","domain_relevance","canonical_subject","subject_origin","reference_relation") if k not in raw)
   probe=" ".join((str(raw.get("current_goal") or ""),str(raw.get("goal_updates") or ""))).casefold()
   raw.setdefault("user_act","new_request");raw.setdefault("intent","conceptual" if any(x in probe for x in ("document","analiz","informacion","información")) else "procedural")
   reference=str(raw.get("reference_relation") or "none")
@@ -118,7 +146,7 @@ class ConversationUnderstanding:
   for key in ("user_act","intent","topic_relation","domain_relevance","current_goal","clarification_target","reasoning_summary","canonical_subject","subject_origin","reference_relation","requested_workflow"):
    if key in clean and clean.get(key) is not None:clean[key]=_semantic_text(clean.get(key))
   clean["goal_updates"],removed=normalize_goal_updates(clean.get("goal_updates"))
-  self.normalization={"removed_goal_update_keys":removed,"schema_aliases":aliases,"removed_unknown_fields":unknown,"contract_repaired":bool(aliases or unknown)}
+  self.normalization={"removed_goal_update_keys":removed,"schema_aliases":aliases,"removed_unknown_fields":unknown,"defaulted_core_fields":defaulted,"contract_repaired":bool(aliases or unknown)}
   return TurnUnderstanding(**clean)
  def _normalize(self,x,memory,message=""):
   corrections=[]

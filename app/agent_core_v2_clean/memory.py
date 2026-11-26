@@ -192,7 +192,9 @@ def apply_understanding(m,u):
    elif k=="attempt_result":
     outcome=str(f.get("outcome") or "unknown").strip().casefold()
     if outcome not in {"resolved","improved","unchanged","worsened","unknown"}:outcome="unknown"
-    if outcome=="unknown" and result:outcome=_infer_outcome(result)
+    # The reported result is this update's own value (v); `result` belongs to the
+    # attempted_action branch and is unbound or stale here.
+    if outcome=="unknown" and v:outcome=_infer_outcome(v)
     if m.support_case.attempts:m.support_case.attempts[-1].update({"result":v,"outcome":outcome})
     else:m.support_case.attempts.append({"action":"previous validation","result":v,"outcome":outcome})
     m.support_case.status="diagnosing"

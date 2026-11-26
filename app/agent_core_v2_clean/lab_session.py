@@ -112,7 +112,82 @@ def get_store(s):
 def reset_store(s):
     reset_gateway_session(s)
     s.pop(KEY, None)
+    s.pop(PENDING_KEY, None)
     return get_store(s)
+
+# ---------------------------------------------------------------------------
+# Interruption-safe turns
+#
+# Streamlit can stop a running script (rerun request after a websocket
+# reconnect, for instance) by raising a control-flow exception that is not an
+# Exception subclass. process_message catches only Exception, so an
+# interrupted turn used to leave the user message stored without an answer, and
+# st.chat_input never returns that prompt again. The prompt is now kept as
+# "pending" until it completes, and the store is restored if the turn is
+# interrupted, so the next run reprocesses it cleanly.
+# ---------------------------------------------------------------------------
+PENDING_KEY = "agent_core_v2_clean_pending_turn"
+MAX_PENDING_ATTEMPTS = 3
+ABANDONED_TURN_TEXT = (
+    "No pude completar tu consulta anterior por una interrupción técnica. "
+    "Por favor, envíala de nuevo."
+)
+
+
+def _turn_recovery(store):
+    recovery = store.setdefault("turn_recovery", {})
+    for key in ("interrupted", "recovered", "abandoned"):
+        recovery.setdefault(key, 0)
+    return recovery
+
+
+def submit_message(message, s):
+    """Register a new user prompt; it stays pending until a turn completes."""
+    s[PENDING_KEY] = {"id": secrets.token_hex(8), "message": str(message), "attempts": 0}
+
+
+def pending_message(s):
+    pending = s.get(PENDING_KEY)
+    return dict(pending) if isinstance(pending, dict) and pending.get("message") else None
+
+
+def process_pending(secrets_obj, s):
+    """Process the pending prompt atomically; return the result or None."""
+    pending = pending_message(s)
+    if not pending:
+        return None
+    store = get_store(s)
+    previous_attempts = int(pending.get("attempts") or 0)
+    if previous_attempts >= MAX_PENDING_ATTEMPTS:
+        s.pop(PENDING_KEY, None)
+        store["messages"] += [
+            {"role": "user", "content": pending["message"]},
+            {"role": "assistant", "content": ABANDONED_TURN_TEXT},
+        ]
+        store["errors"].append({"turn": store["memory"].turn_number + 1, "message": pending["message"], "error_type": "TurnInterrupted", "error": f"abandoned_after_{previous_attempts}_interrupted_attempts"})
+        _turn_recovery(store)["abandoned"] += 1
+        enforce_runtime_memory_limits(store)
+        return None
+    if previous_attempts:
+        _turn_recovery(store)["interrupted"] += 1
+    s[PENDING_KEY] = {**pending, "attempts": previous_attempts + 1}
+    snapshot = deepcopy(store)
+    completed = False
+    try:
+        result = process_message(pending["message"], secrets_obj, s)
+        completed = True
+    finally:
+        if completed:
+            s.pop(PENDING_KEY, None)
+            if previous_attempts:
+                _turn_recovery(get_store(s))["recovered"] += 1
+                if isinstance(result, dict):
+                    result["turn_recovery"] = {"recovered_after_interruptions": previous_attempts}
+        else:
+            # Interrupted (or failed outside process_message's own handler):
+            # undo partial mutations so the retry does not duplicate the turn.
+            s[KEY] = snapshot
+    return result
 
 def _gateway(secrets_obj, s):
     return LLMGateway(load_gateway_config(secrets_obj), s)
@@ -545,4 +620,6 @@ def export_session(s):
     payload["diagnostic_manifest"]=build_diagnostic_manifest(x, payload)
     payload["qa_shadow_observability"]=summarize_shadow_turns(exported_turns)
     payload["knowledge_comparison_observability"]=summarize_knowledge_comparison(exported_turns)
+    payload["turn_recovery"]=deepcopy(_turn_recovery(x))
+    payload["pending_turn"]=bool(pending_message(s))
     return payload
