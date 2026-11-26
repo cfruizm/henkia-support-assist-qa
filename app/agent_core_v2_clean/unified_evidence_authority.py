@@ -4,7 +4,7 @@ import re
 import unicodedata
 
 from .operation_bridge import FILLERS, QUALIFIERS, present_terms, translation_map
-from .text_stems import collapse_by_stem
+from .text_stems import collapse_by_stem, stem_index, term_matches
 
 _GENERIC = {
     "como", "para", "una", "uno", "unos", "unas", "que", "cual", "cuales",
@@ -124,13 +124,31 @@ def _dedup(items):
         out.append(deepcopy(item))
     return out
 
+def _anchored_message(message, understanding):
+    """Message words the understanding contract confirms (by stem), plus codes.
+
+    Discourse markers ("cambiando de tema", "por cierto") are not part of the
+    request; the LLM goal and details leave them out, so a word absent from
+    them is not a required dimension. Tokens with digits (error codes, models)
+    are always kept. No word list: confirmation comes from the contract.
+    """
+    details=understanding.get("goal_updates") or {}
+    anchor_text=" ".join(str(x or "") for x in (
+        understanding.get("current_goal"),understanding.get("canonical_subject"),
+        *(details.values() if isinstance(details,dict) else ()),
+    ))
+    anchors=stem_index({t for t in re.findall(r"[a-z0-9]+",_norm(anchor_text)) if len(t)>=3})
+    if not anchors:return str(message or "")
+    kept=[t for t in _tokens(message) if any(ch.isdigit() for ch in t) or term_matches(t,anchors)]
+    return " ".join(sorted(kept))
+
 def _request_text(message, understanding, retrieval):
     understanding=understanding or {}
     if understanding.get("degraded"):return str(message or "")
     fields=((retrieval.get("query") or {}).get("fields") or {})
     relation=str(fields.get("topic_relation") or understanding.get("topic_relation") or "")
     act=str(fields.get("user_act") or understanding.get("user_act") or "")
-    if relation=="new_topic":return " ".join((str(message or ""),str(understanding.get("current_goal") or "")))
+    if relation=="new_topic":return " ".join((_anchored_message(message,understanding),str(understanding.get("current_goal") or "")))
     if relation in {"same_topic","same_topic_refinement","return_to_previous"} and act in {"follow_up","answer_to_question","request_elaboration","attempt_result","reported_failure"}:
         details=fields.get("details") or {}
         accumulated=" ".join(str(x or "") for x in (fields.get("goal"),fields.get("contextual_operation"),details.get("operation"),details.get("subject"),understanding.get("current_goal")))

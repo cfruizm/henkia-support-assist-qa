@@ -67,3 +67,20 @@ def test_semantic_fit_ignores_codes_and_extensions_and_matches_word_forms():
     assert "analiza" in fit["matched_terms"] or "analizar" in fit["matched_terms"]
     assert not any(any(ch.isdigit() for ch in t) or t == "pdf" for t in fit["unconfirmed_title_terms"])
     assert fit["score"] >= 0.15, fit
+
+
+def test_discourse_marker_is_not_a_required_dimension():
+    doc = _item("Platform Alpha Installation Guide",
+                "To install Platform Alpha, run the installer, select the server and complete the installation wizard.")
+    retrieval = {"ok": True, "evidence": [doc], "generation_evidence": [doc], "diagnostic_evidence": [doc],
+                 "query": {"fields": {"topic_relation": "new_topic", "user_act": "new_request"}}, "_answer_context": {}}
+    understanding = {"user_act": "new_request", "intent": "procedural", "topic_relation": "new_topic",
+                     "current_goal": "Explicar cómo instalar Platform Alpha",
+                     "goal_updates": {"subject": "Platform Alpha", "operation": "instalar"},
+                     "canonical_subject": "Platform Alpha", "subject_origin": "current_message",
+                     "reference_relation": "none", "term_translations": [{"term": "instala", "english": "install"}]}
+    verdict = apply_unified_evidence_verdict(
+        retrieval, "Cambiando de tema, ¿cómo se instala Platform Alpha?", understanding)["evidence_verdict"]
+    required = verdict["operation_alignment"]["required_terms"]
+    assert "cambiando" not in required and "tema" not in required, verdict
+    assert verdict["accepted"], verdict
