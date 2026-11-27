@@ -8,3 +8,4 @@ __pycache__/
 .env.*
 .streamlit/secrets.toml
 secret_names.json
+ke_web_sync_out/

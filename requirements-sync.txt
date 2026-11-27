@@ -1,0 +1,5 @@
+# Only for scripts/ke_web_sync.py (not used by the app)
+requests
+trafilatura
+beautifulsoup4
+lxml
