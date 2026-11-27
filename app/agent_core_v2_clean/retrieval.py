@@ -59,6 +59,7 @@ class RetrievalQueryBuilder:
    # This keeps follow-up contracts complete while preserving new-topic isolation.
    details.update(current_updates)
   fields={"goal":understanding.current_goal if new_topic else (memory.pending_goal.summary or understanding.current_goal),"intent":understanding.intent if new_topic else (memory.pending_goal.intent or understanding.intent),"subject":_text(getattr(understanding,"canonical_subject",None)),"details":details,"symptoms":[] if new_topic else list(memory.support_case.symptoms),"observations":[] if new_topic else list(memory.support_case.observations[-3:]),"affected_scope":None if new_topic else memory.support_case.affected_scope,"current_message":message,"contextual_operation":contextual_operation or None,"user_act":user_act,"topic_relation":topic_relation,"model_topic_relation":model_topic_relation,"query_isolation":"new_topic" if new_topic else "contextual"}
+  fields["english_terms"]=_english_terms(understanding)
   parts=[str(message or "").strip(),_text(fields["goal"]).strip()]
   if contextual_operation and contextual_operation.casefold()!=_text(fields["goal"]).strip().casefold():parts.append(contextual_operation)
   parts += [f"{k}: {v}" for k,v in details.items()]+fields["symptoms"]+fields["observations"]
@@ -67,8 +68,19 @@ class RetrievalQueryBuilder:
   return RetrievalQuery(text,fields,fingerprint)
  def current_only(self,message,understanding):
   fields={"goal":understanding.current_goal,"intent":understanding.intent,"details":dict(understanding.goal_updates or {}),"symptoms":[],"observations":[],"affected_scope":None,"current_message":message,"context_mode":"current_turn_only","grounded_only":True}
+  fields["english_terms"]=_english_terms(understanding)
   text=". ".join(dict.fromkeys(x for x in [str(understanding.current_goal or ""),str(message or "")]+[str(v) for v in fields["details"].values()] if x))[:900]
   return RetrievalQuery(text,fields,hashlib.sha256(json.dumps(fields,sort_keys=True,ensure_ascii=False).encode()).hexdigest()[:20])
+def _english_terms(understanding):
+ """English equivalents of request terms from the understanding contract (term_translations).
+
+ Vendor documentation is often in English while users ask in Spanish; the semantic
+ fit compares words, so the translations the LLM already gives are carried here."""
+ out=[]
+ for item in getattr(understanding,"term_translations",None) or []:
+  english=str((item or {}).get("english") or "").strip() if isinstance(item,dict) else ""
+  if english and english not in out:out.append(english)
+ return out[:12]
 def _tokens(text):
  text=unicodedata.normalize("NFKD",str(text or "")).encode("ascii","ignore").decode().casefold();stop={"como","para","que","con","del","las","los","una","uno","por","the","and","from","this","realizar","explicar"}
  return {x for x in re.findall(r"[a-z0-9_]{3,}",text) if x not in stop}
@@ -94,7 +106,7 @@ def _focused_query(built):
  f=dict(built.fields or {});message=str(f.get("current_message") or "").strip();details={str(k):_text(v) for k,v in dict(f.get("details") or {}).items() if _text(v).strip()};subject=str(f.get("subject") or details.get("subject") or "").strip()
  if subject:details["subject"]=subject
  text=". ".join(dict.fromkeys(x for x in [message,subject]+[str(v) for v in details.values()] if x))[:700]
- ff={"goal":f.get("goal"),"intent":f.get("intent"),"subject":subject,"details":details,"symptoms":[],"observations":[],"affected_scope":None,"current_message":message,"context_mode":"operation_focused","grounded_only":True,"topic_relation":f.get("topic_relation"),"model_topic_relation":f.get("model_topic_relation"),"query_isolation":f.get("query_isolation")}
+ ff={"goal":f.get("goal"),"intent":f.get("intent"),"subject":subject,"details":details,"symptoms":[],"observations":[],"affected_scope":None,"current_message":message,"english_terms":list(f.get("english_terms") or []),"context_mode":"operation_focused","grounded_only":True,"topic_relation":f.get("topic_relation"),"model_topic_relation":f.get("model_topic_relation"),"query_isolation":f.get("query_isolation")}
  return RetrievalQuery(text,ff,hashlib.sha256(json.dumps(ff,sort_keys=True,ensure_ascii=False).encode()).hexdigest()[:20])
 def _merge_evidence(*groups):
  merged=[];positions={}

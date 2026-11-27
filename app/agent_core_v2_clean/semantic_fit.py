@@ -57,7 +57,8 @@ def _structured_request(fields,details):
  if not values or not message:return ""
  anchors=stem_index({t for t in _norm(" ".join((values,str(fields.get("goal") or "")))).split() if len(t)>=3})
  kept=[t for t in _norm(message).split() if any(ch.isdigit() for ch in t) or (len(t)>=3 and term_matches(t,anchors))]
- return " ".join((values," ".join(kept)))
+ english=" ".join(str(x) for x in fields.get("english_terms") or [])
+ return " ".join(x for x in (values," ".join(kept),english) if x)
 
 def evaluate_item(item,query_text,fields=None,answer_context=None,canonical=False):
  fields=fields or {};answer_context=answer_context or {};details=fields.get("details") or {}

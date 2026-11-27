@@ -76,3 +76,26 @@ def test_upload_requires_a_base_uuid():
         assert "uuid" in str(exc)
     else:
         raise AssertionError("expected SystemExit")
+
+
+def test_ke_rows_use_the_document_title_and_requests_carry_english_terms():
+    from app.knowledge_gateway.agent_core_shadow import ke_evidence_rows
+    from app.knowledge_gateway.henkia_knowledge_engine import normalize
+    from app.agent_core_v2_clean.semantic_fit import evaluate_item
+
+    payload = {"data": [{"filename": "www-papercut-com-kb-setupfindme-afbe90ac.md", "score": 0.8,
+                         "attributes": {"document_title": "Set up Find-Me printing with PaperCut MF",
+                                        "reference_url": "https://www.papercut.com/kb/Main/SetupFindMePrintingUsingPaperCutMF/",
+                                        "document_uri": "tenants/x/kb/y/www-papercut-com-kb-setupfindme-afbe90ac.md",
+                                        "chunk_id": "c1", "ordinal": 3},
+                         "content": [{"type": "text", "text": "Configure the Find-Me queue in PaperCut MF and set up the virtual queue."}]}]}
+    rows = ke_evidence_rows(normalize(payload, "q", "kb1", 1.0, 200).to_dict())
+    assert rows[0]["title"] == "Set up Find-Me printing with PaperCut MF"
+    assert rows[0]["url"].startswith("https://www.papercut.com/")
+
+    fields = {"goal": "Explicar cómo configurar la impresión Find-Me en PaperCut", "intent": "procedural",
+              "current_message": "¿Cómo configuro Find-Me en PaperCut?", "topic_relation": "new_topic",
+              "details": {"subject": "PaperCut", "operation": "configurar", "focus": "impresión Find-Me"}}
+    without = evaluate_item(rows[0], "q", fields, canonical=True)["score"]
+    with_en = evaluate_item(rows[0], "q", {**fields, "english_terms": ["configure", "set up", "printing", "queue"]}, canonical=True)["score"]
+    assert with_en > without, (without, with_en)

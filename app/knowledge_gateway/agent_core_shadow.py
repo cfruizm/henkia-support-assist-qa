@@ -306,11 +306,14 @@ def ke_evidence_rows(normalized_result: Mapping[str, Any]) -> list[dict]:
         if not isinstance(row, Mapping):
             continue
         source_name = str(row.get("source_name") or "Fuente KE sin titulo").strip()
+        # The page or document title the KE stores (document_title); the file name
+        # (e.g. a URL slug) is only a fallback. Title terms weigh in the verdict.
+        display_title = str(row.get("document_title") or "").strip() or source_name
         source = str(row.get("document_uri") or row.get("file_id") or source_name).strip()
         reference_url = str(row.get("reference_url") or "").strip()
         metadata = {
             "provider": "henkia_ke",
-            "title": source_name,
+            "title": display_title,
             "source": source,
             "source_name": source_name,
             "file_id": row.get("file_id"),
@@ -335,7 +338,7 @@ def ke_evidence_rows(normalized_result: Mapping[str, Any]) -> list[dict]:
             metadata["page_label"] = row.get("page")
         evidence.append({
             "id": f"KE{index}",
-            "title": source_name,
+            "title": display_title,
             "source": source,
             "url": reference_url,
             "score": row.get("score"),
