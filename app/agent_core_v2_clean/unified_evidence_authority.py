@@ -361,24 +361,35 @@ def _values_only_in_other_documents(query,candidates,identities):
     """
     from .documented_fact_coverage import _numeric_values,_property_terms
     from .text_stems import stem_index,term_matches
-    if str(query.get("user_act") or "") not in {"follow_up","request_elaboration","answer_to_question"}:return False
+    if str(query.get("user_act") or "") not in {"follow_up","request_elaboration","answer_to_question"}:return set()
     terms={t for t in _property_terms(str(query.get("current_message") or "")) if not t.isdigit()}
-    if not terms:return False
+    if not terms:return set()
     def has_values(item):
         text=str(item.get("text") or "")
         if len(_numeric_values(text))<2:return False
         available=stem_index({w for w in re.findall(r"[a-z0-9]+",_norm(text)) if len(w)>=3})
         return any(term_matches(t,available) for t in terms)
-    in_active=any(has_values(x) for x in candidates if _identity(x) in identities)
-    elsewhere=any(has_values(x) for x in candidates if _identity(x) not in identities)
-    return bool(elsewhere and not in_active)
+    if any(has_values(x) for x in candidates if _identity(x) in identities):return set()
+    return {_identity(x) for x in candidates if _identity(x) not in identities and has_values(x)}
+
+def value_followup_release(out,extra=()):
+    """True when a value follow-up must leave the active document (see helper above).
+
+    The candidate pool keeps only the active document once it has evidence, so this
+    reads every fragment the turn retrieved (generation and diagnostic evidence).
+    """
+    query=(out.get("query") or {}).get("fields") or {};context=out.get("_answer_context") or {}
+    identities={str(x).strip() for x in context.get("source_identities") or [] if str(x).strip()}
+    if not identities:return set()
+    rows=list(extra)+list(out.get("generation_evidence") or [])+list(out.get("evidence") or [])+list(out.get("diagnostic_evidence") or [])
+    return _values_only_in_other_documents(query,rows,identities)
 
 def _primary_continuity_selection(out,candidates,wanted):
     query=(out.get("query") or {}).get("fields") or {};context=out.get("_answer_context") or {}
     if str(query.get("previous_evidence_role") or "")!="primary":return None
     identities={str(x).strip() for x in context.get("source_identities") or [] if str(x).strip()}
     if not identities:return None
-    if _values_only_in_other_documents(query,candidates,identities):return None
+    if value_followup_release(out,candidates):return None
     object_rows,object_scope=_document_object_candidates(out,candidates)
     if object_rows:
         identity=_identity(object_rows[0]);selected=[item for item in object_rows if _identity(item)==identity]
@@ -420,6 +431,11 @@ def _candidate_pool(out, understanding=None):
         return _dedup(primary + diagnostic)
     if not primary:
         return _dedup(diagnostic)
+    value_documents = value_followup_release(out)
+    if value_documents:
+        # A value follow-up the active document cannot answer: the documents of the
+        # turn that list the requested values compete (QA: "¿Y los puertos?").
+        return [item for item in _dedup(primary + diagnostic) if _identity(item) in value_documents]
     identities = {_identity(item) for item in primary if _identity(item)}
     # Diagnostic chunks from the already-authorized document are eligible for
     # follow-up progression. This does not authorize unrelated documents.

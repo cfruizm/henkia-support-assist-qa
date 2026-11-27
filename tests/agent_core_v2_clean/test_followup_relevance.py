@@ -133,3 +133,38 @@ def test_value_followup_leaves_a_document_without_the_values():
     # When the active document has the values, continuity keeps it.
     with_values = dict(procedure, text="Puertos del monitor: 443 TCP y 5222 TCP.")
     assert _primary_continuity_selection(out, [with_values, table], {"puertos"}) is not None
+
+
+def test_value_followup_sees_other_documents_outside_the_candidate_pool():
+    from app.agent_core_v2_clean.unified_evidence_authority import _primary_continuity_selection
+
+    procedure = {"id": "R1", "title": "DA0403 Instalar monitor SDS", "source": "sp://da0403", "page": "",
+                 "text": "Para instalar el monitor SDS ejecute el instalador y registre el equipo en el portal."}
+    table = {"id": "D2", "title": "HP SDS Manager System Requirements", "source": "kb://sds-req", "page": "",
+             "text": "Puerto 443 TCP salida, Puerto 161 UDP SNMP, Puerto 427 UDP SLP."}
+    out = {"query": {"fields": {"previous_evidence_role": "primary", "user_act": "request_elaboration",
+                                "current_message": "¿Y los puertos?"}},
+           "_answer_context": {"source_identities": ["sp://da0403"]}, "diagnostic_evidence": [procedure, table]}
+    assert _primary_continuity_selection(out, [procedure], {"puertos"}) is None
+
+
+def test_value_followup_verdict_selects_the_document_with_the_table():
+    from app.agent_core_v2_clean.unified_evidence_authority import apply_unified_evidence_verdict
+
+    procedure = {"id": "R1", "title": "DA0403 Instalar monitor SDS", "source": "sp://da0403", "page": "",
+                 "text": "Requisitos para instalar el monitor SDS: sistema operativo Windows y acceso a Internet.",
+                 "semantic_fit": {"score": 0.4}}
+    table = {"id": "D2", "title": "HP SDS Manager System Requirements", "source": "kb://sds-req", "page": "4",
+             "text": "Puertos requeridos para el monitor SDS: Puerto 443 TCP salida, Puerto 161 UDP SNMP, Puerto 427 UDP SLP, Puerto 5222 TCP.",
+             "semantic_fit": {"score": 0.35}}
+    retrieval = {"ok": True, "generation_evidence": [procedure], "evidence": [procedure], "diagnostic_evidence": [procedure, table],
+                 "query": {"fields": {"previous_evidence_role": "primary", "user_act": "request_elaboration", "topic_relation": "same_topic",
+                                      "current_message": "¿Y los puertos?", "goal": "Requisitos para instalar HP SDS Monitor",
+                                      "details": {"subject": "HP SDS Monitor", "operation": "instalar"}, "intent": "requirements"}},
+                 "_answer_context": {"source_identities": ["sp://da0403"], "goal": "Requisitos para instalar HP SDS Monitor"}}
+    understanding = {"intent": "requirements", "user_act": "request_elaboration", "topic_relation": "same_topic",
+                     "current_goal": "Conocer los puertos requeridos por HP SDS Monitor", "canonical_subject": "HP SDS Monitor",
+                     "goal_updates": {"subject": "HP SDS Monitor", "focus": "puertos"}}
+    verdict = apply_unified_evidence_verdict(retrieval, "¿Y los puertos?", understanding)["evidence_verdict"]
+    sources = {x["source"] for x in verdict.get("selected_evidence") or []}
+    assert "kb://sds-req" in sources, verdict.get("reason")
