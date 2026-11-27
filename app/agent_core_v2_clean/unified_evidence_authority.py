@@ -148,7 +148,15 @@ def _request_text(message, understanding, retrieval):
     fields=((retrieval.get("query") or {}).get("fields") or {})
     relation=str(fields.get("topic_relation") or understanding.get("topic_relation") or "")
     act=str(fields.get("user_act") or understanding.get("user_act") or "")
-    if relation=="new_topic":return " ".join((_anchored_message(message,understanding),str(understanding.get("current_goal") or "")))
+    if relation=="new_topic":
+        # The goal is LLM prose ("Obtener los pasos para configurar la función..."): its
+        # framing words became required dimensions no document states (QA: PaperCut
+        # Find-Me pages rejected on "pasos"/"funcion"). With structured details, the
+        # request is the confirmed message words plus the details; the goal is only
+        # used when there are no details.
+        details=understanding.get("goal_updates") or {}
+        values=" ".join(str(v or "") for v in details.values()) if isinstance(details,dict) else ""
+        return " ".join((_anchored_message(message,understanding),values.strip() or str(understanding.get("current_goal") or "")))
     if relation in {"same_topic","same_topic_refinement","return_to_previous"} and act in {"follow_up","answer_to_question","request_elaboration","attempt_result","reported_failure"}:
         details=fields.get("details") or {}
         accumulated=" ".join(str(x or "") for x in (fields.get("goal"),fields.get("contextual_operation"),details.get("operation"),details.get("subject"),understanding.get("current_goal")))

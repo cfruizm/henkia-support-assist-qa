@@ -99,3 +99,29 @@ def test_ke_rows_use_the_document_title_and_requests_carry_english_terms():
     without = evaluate_item(rows[0], "q", fields, canonical=True)["score"]
     with_en = evaluate_item(rows[0], "q", {**fields, "english_terms": ["configure", "set up", "printing", "queue"]}, canonical=True)["score"]
     assert with_en > without, (without, with_en)
+
+
+def test_english_vendor_page_is_accepted_without_goal_framing_words():
+    """QA: Find-Me pages were rejected on goal words ("pasos", "funcion") no page states."""
+    from app.knowledge_gateway.agent_core_shadow import build_shadow_retrieval
+
+    name = "www-papercut-com-kb-main-setupfindmeprintingusingpapercutmf-afbe90ac.md"
+    texts = [(0, "# How to set up Find-Me printing with PaperCut MF\n\nThis article demonstrates how to set up Find-Me Printing with PaperCut MF."),
+             (3, "## 3. Configure the Find-Me queue in PaperCut MF\n\nThis section walks you through logging into PaperCut MF to configure Find-Me Printing."),
+             (9, "3. Check the Enable find me printing support checkbox.\n4. Select This device (single queue).\n5. Select the destination queue for the device.")]
+    rows = [{"source_name": name, "content": text, "score": 0.75, "ordinal": ordinal, "chunk_id": f"c{ordinal}",
+             "document_uri": f"tenants/x/kb/y/{name}", "reference_url": "https://www.papercut.com/kb/Main/SetupFindMePrintingUsingPaperCutMF/",
+             "knowledge_base_id": "kb1"} for ordinal, text in texts]
+    goal = "Obtener los pasos para configurar la función Find-Me en PaperCut"
+    details = {"subject": "PaperCut Find-Me", "product": "PaperCut", "operation": "configurar", "component": "Find-Me"}
+    u = {"user_act": "new_request", "intent": "procedural", "topic_relation": "new_topic", "current_goal": goal,
+         "goal_updates": details, "canonical_subject": "PaperCut Find-Me", "reference_relation": "none",
+         "term_translations": [{"term": "configuro", "english": "configure"}]}
+    message = "¿Cómo configuro Find-Me en PaperCut?"
+    fields = {"goal": goal, "intent": "procedural", "details": details, "current_message": message, "english_terms": ["configure"],
+              "topic_relation": "new_topic", "user_act": "new_request"}
+    result = {"understanding": u, "topic_boundary": {"relation": "new_topic"}, "retrieval": {"query": {"text": message, "fields": fields}},
+              "knowledge_comparison": {"query": message, "normalized_result": {"http_status": 200, "error": None, "results": rows}}}
+    verdict = build_shadow_retrieval(result, message, {}, {})["evidence_verdict"]
+    assert verdict["status"] == "sufficient", verdict.get("reason")
+    assert "pasos" not in verdict["operation_alignment"]["required_terms"]
