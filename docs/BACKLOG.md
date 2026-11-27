@@ -36,6 +36,17 @@ Limitaciones conocidas:
 - Bases: `Impresion` (HP SDS, GAV Tracking, HP AC, HP WJA) y `OperacionSIMP` (DA Arus vía conector SharePoint).
 - Sitios web (PaperCut, HP, Epson…): sin conector en el KE. Solicitud al desarrollador del KE: <https://claude.ai/artifact/JFMg11QiJAtJLjawbmLzNW>.
 
+### Inventario de corpus local vs KE (2026-11-26)
+
+| Contenido | Local (Chroma) | KE | Brecha |
+|---|---|---|---|
+| PDFs GAV Tracking, HP AC, HP SDS, HP WJA | 67 | 67 (base Impresion) | Ninguna |
+| PDFs internos DA Arus | 31 | 30 (base OperacionSIMP, conector SharePoint) | Falta DA0390 (Analizar Dashboard Control Operación SIMP) |
+| Páginas web de PaperCut (manuales, KB, known issues, requisitos) | 964 | 0 como páginas web | **Brecha principal** → opción C o conector web |
+| Material solo en KE | — | 31 en Impresion (certificación PaperCut, OXP, Hive, Epson Embedded) y al menos 8 en OperacionSIMP (IN0504, DA0425, DA0445, plantillas…) | KE ya supera a local en estos temas |
+
+Método: Impresion listada con la herramienta MCP `listar_documentos`; OperacionSIMP no se puede listar (`HENKIA-RAG-4001`, fuente conectada), se verificó buscando cada título DA Arus en esa base. Los conteos de OperacionSIMP son un mínimo.
+
 ### Opción C — crawler externo + API del KE (a explorar)
 
 Mientras el KE no tenga conector web, nuestro crawler sube las páginas al KE:
