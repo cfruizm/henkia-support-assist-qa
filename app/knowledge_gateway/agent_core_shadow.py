@@ -42,11 +42,21 @@ DOCUMENTED_MODES = frozenset({
     "documented_answer", "documented_answer_partial",
     "procedural_documented_answer", "procedural_documented_answer_partial",
 })
-PUBLISH_MODES = ("off", "complement")
+PUBLISH_MODES = ("off", "complement", "primary")
+
+# Local answers that come from the documentary pipeline and may be replaced in
+# primary mode. Clarifications, escalation, social and budget answers are never
+# replaced: the KE route only competes on documentary answers.
+_REPLACEABLE_LOCAL_PREFIXES = ("controlled_internal_knowledge", "documented_degraded")
+_REPLACEABLE_LOCAL_MODES = frozenset({
+    "documented_insufficient", "documented_citation_guard", "documented_provider_degraded",
+    "documented_truncation_safe_defer", "procedural_evidence_guard", "procedural_citation_guard",
+    "procedural_provider_degraded", "procedural_evidence_contradiction_guard",
+})
 
 
 def publish_mode(config: Any) -> str:
-    """KNOWLEDGE_PUBLISH_MODE: off (default, observational) or complement."""
+    """KNOWLEDGE_PUBLISH_MODE: off (default, observational), complement or primary."""
     getter = getattr(config, "get", lambda *_: None)
     raw = str(getter("KNOWLEDGE_PUBLISH_MODE", "off") or "off").strip().casefold()
     return raw if raw in PUBLISH_MODES else "off"
@@ -61,9 +71,46 @@ def _is_documented(answer: Mapping[str, Any]) -> bool:
     )
 
 
+def _local_replaceable(local_answer: Mapping[str, Any]) -> bool:
+    mode = str(_mapping(local_answer).get("mode") or "")
+    return mode in DOCUMENTED_MODES or mode in _REPLACEABLE_LOCAL_MODES or mode.startswith(_REPLACEABLE_LOCAL_PREFIXES)
+
+
+def _primary_decision(local_answer: Mapping[str, Any], ke_answer: Mapping[str, Any],
+                      ke_route: Mapping[str, Any], isolation: Mapping[str, Any]) -> dict:
+    """KE-06: KE is the primary source and local is the fallback.
+
+    The KE answer is published when it is documented, its evidence was accepted
+    and the route used no local evidence. Local stays when KE has no
+    documentation, when the local answer is not documentary (clarification,
+    escalation...), or when KE is partial while local is complete.
+    """
+    local_answer, ke_answer = _mapping(local_answer), _mapping(ke_answer)
+    local_documented = bool(local_answer.get("documented_evidence_used")) or _is_documented(local_answer)
+    ke_partial = str(ke_answer.get("mode") or "").endswith("_partial")
+    local_partial = str(local_answer.get("mode") or "").endswith("_partial")
+    checks = {
+        "local_replaceable": _local_replaceable(local_answer),
+        "ke_documented": _is_documented(ke_answer),
+        "ke_evidence_accepted": _mapping(ke_route).get("evidence_status") in {"sufficient", "partial"},
+        "ke_isolated": bool(_mapping(isolation).get("isolated")),
+        "ke_not_less_complete": not (ke_partial and local_documented and not local_partial),
+    }
+    applied = all(checks.values())
+    failed = next((k for k, ok in checks.items() if not ok), None)
+    if applied:
+        reason = "ke_primary_over_documented_local" if local_documented else "ke_primary_over_undocumented_local"
+    else:
+        reason = f"not_{failed}"
+    return {"mode": "primary", "applied": applied, "reason": reason, "checks": checks,
+            "local_mode": local_answer.get("mode"), "ke_mode": ke_answer.get("mode")}
+
+
 def complement_decision(mode: str, local_answer: Mapping[str, Any], ke_answer: Mapping[str, Any],
                         ke_route: Mapping[str, Any], isolation: Mapping[str, Any]) -> dict:
-    """Decide whether the KE answer replaces the local one (KE-04 complement)."""
+    """Decide whether the KE answer replaces the local one (KE-04 complement, KE-06 primary)."""
+    if mode == "primary":
+        return _primary_decision(local_answer, ke_answer, ke_route, isolation)
     local_answer = _mapping(local_answer)
     local_documented = bool(local_answer.get("documented_evidence_used")) or _is_documented(local_answer)
     checks = {
@@ -378,8 +425,9 @@ def build_shadow_retrieval(
     fetcher = ke_document_fetcher(config, evidence) if config is not None and intent == "procedural" else None
     queries = document_queries(message, result)
     full_trace = None
-    if fetcher is not None and ke_full_document.enabled(config) and not _local_documented(result.get("answer")):
-        # KE-05.3: the KE answer is the one the user will see; read the full text.
+    ke_may_publish = publish_mode(config) == "primary" or not _local_documented(result.get("answer"))
+    if fetcher is not None and ke_full_document.enabled(config) and ke_may_publish:
+        # KE-05.3: the KE answer is the one the user will likely see; read the full text.
         retrieval = apply_ke_document_order(retrieval, None, queries)
         if _mapping(retrieval.get("procedural_expansion")).get("ok"):
             from app.knowledge_gateway.henkia_knowledge_engine import read_full_document

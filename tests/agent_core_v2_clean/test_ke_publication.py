@@ -175,3 +175,45 @@ def test_packed_evidence_footer_recovers_internal_link_from_retrieval():
         assert "metadata" not in other[0]
     finally:
         source_access_policy.configure_source_access({})
+
+
+def test_primary_rules():
+    route, iso = {"evidence_status": "sufficient"}, {"isolated": True}
+    local_doc = {"mode": "documented_answer", "documented_evidence_used": True, "text": "local [R1]"}
+    local_internal = {"mode": "controlled_internal_knowledge", "documented_evidence_used": False, "text": "x"}
+    clarification = {"mode": "material_clarification", "documented_evidence_used": False, "text": "¿Cuál?"}
+    ke_doc = {"mode": "procedural_documented_answer", "documented_evidence_used": True, "text": "ke [R1]"}
+    ke_partial = {"mode": "procedural_documented_answer_partial", "documented_evidence_used": True, "text": "ke [R1]"}
+    ke_degraded = {"mode": "documented_degraded_reference", "documented_evidence_used": True, "text": "z"}
+    assert complement_decision("primary", local_doc, ke_doc, route, iso)["reason"] == "ke_primary_over_documented_local"
+    assert complement_decision("primary", local_internal, ke_doc, route, iso)["reason"] == "ke_primary_over_undocumented_local"
+    assert complement_decision("primary", local_doc, ke_degraded, route, iso)["reason"] == "not_ke_documented"
+    assert complement_decision("primary", clarification, ke_doc, route, iso)["reason"] == "not_local_replaceable"
+    assert complement_decision("primary", local_doc, ke_partial, route, iso)["reason"] == "not_ke_not_less_complete"
+    assert complement_decision("primary", local_internal, ke_partial, route, iso)["applied"]
+    assert complement_decision("primary", local_doc, ke_doc, {"evidence_status": "insufficient"}, iso)["reason"] == "not_ke_evidence_accepted"
+    assert complement_decision("primary", local_doc, ke_doc, route, {"isolated": False})["reason"] == "not_ke_isolated"
+
+
+def test_publish_mode_accepts_primary():
+    assert publish_mode({"KNOWLEDGE_PUBLISH_MODE": "primary"}) == "primary"
+
+
+def test_execute_primary_replaces_a_documented_local_answer():
+    result = _result()
+    result["answer"]["documented_evidence_used"] = True
+    memory = _Memory()
+    block = execute(result, "¿Y los puertos?", {"KNOWLEDGE_PUBLISH_MODE": "primary"}, {}, None,
+                    {"answer_context": {}, "memory": memory}, _runner("documented_answer"))
+    assert block["publication"]["applied"] and block["publication"]["reason"] == "ke_primary_over_documented_local"
+    assert result["answer"]["retrieval_provider"] == "henkia_ke"
+    assert result["local_answer_replaced"]["mode"] == "documented_answer"
+
+
+def test_execute_primary_keeps_local_when_ke_is_not_documented():
+    result = _result()
+    result["answer"]["documented_evidence_used"] = True
+    block = execute(result, "¿Y los puertos?", {"KNOWLEDGE_PUBLISH_MODE": "primary"}, {}, None,
+                    {"answer_context": {}}, _runner("controlled_internal_knowledge", documented=False))
+    assert not block["publication"]["applied"] and block["publication"]["reason"] == "not_ke_documented"
+    assert result["answer"]["text"] == "Respuesta publicada [R1]."

@@ -28,7 +28,7 @@ Limitaciones conocidas:
 | KE-03.4 | Búsqueda en varias bases del KE (`HENKIA_KE_KB_IDS`) | Hecho en código; pendiente validar con la nueva API key |
 | KE-04 | Publicación del KE como complemento (`KNOWLEDGE_PUBLISH_MODE=complement`) cuando Chroma no tiene evidencia y el KE sí | Implementado (F3.5); activar con el secret |
 | KE-05 | Adaptar el Agent Core al KE: búsqueda dentro de un documento (`rag.filters.document_uri`), documento completo (`/document?uri=`), varias consultas es/en | KE-05.1 búsqueda dentro del documento; KE-05.3 documento completo vía MCP leer_documento (`HENKIA_KE_FULL_DOCUMENT=procedural`). Pendiente: varias consultas es/en |
-| KE-06 | KE como proveedor principal con Chroma de respaldo | Requiere corpus completo y campaña etiquetada |
+| KE-06 | KE como proveedor principal con Chroma de respaldo (`KNOWLEDGE_PUBLISH_MODE=primary`) | Implementado; falta campaña de validación en QA antes de dejarlo por defecto. Local sigue de respaldo para lo que KE no tiene (sitios web) |
 | KE-07 | Retiro de Chroma | Requiere aprobación de Arquitectura/Seguridad/IA |
 
 ### Corpus del KE
@@ -47,6 +47,10 @@ Mientras el KE no tenga conector web, nuestro crawler sube las páginas al KE:
 5. Requiere una API key con `kb:write` e `ingest` solo sobre la base destino, distinta de la key de consulta de la app.
 
 Al pasar después a un conector del KE, cada página debe conservar su `reference_url`.
+
+### Pendientes detectados en QA
+
+- Seguimiento de valores sin pedir la lista completa ("¿Y los puertos?" tras los requisitos de HP SDS) responde con los fragmentos recuperados (3 de 10 puertos): activar la lectura dentro del documento cuando el seguimiento pide valores del mismo documento.
 
 ## Fase 4 — Deuda técnica
 

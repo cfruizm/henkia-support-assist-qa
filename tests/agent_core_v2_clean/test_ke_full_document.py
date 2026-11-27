@@ -126,12 +126,12 @@ def _simp_result(local_mode, documented):
                      "knowledge_comparison": {"query": message, "normalized_result": {"http_status": 200, "error": None, "results": deepcopy(SIMP_ROWS)}}}
 
 
-def _run(local_mode, documented, enabled=True):
+def _run(local_mode, documented, enabled=True, extra=None):
     reads, searches = [], []
     original_read, original_search = ke.read_full_document, ke.search_document
     ke.read_full_document = lambda config, kb, uri: reads.append(uri) or {"ok": True, "text": DOC, "latency_ms": 1.0}
     ke.search_document = lambda *a, **k: searches.append(a) or ke.SearchResult(provider="henkia_ke", query="q", http_status=200)
-    config = {**BASE, "HENKIA_KE_KB_IDS": "kb2", **({"HENKIA_KE_FULL_DOCUMENT": "procedural"} if enabled else {})}
+    config = {**BASE, "HENKIA_KE_KB_IDS": "kb2", **({"HENKIA_KE_FULL_DOCUMENT": "procedural"} if enabled else {}), **(extra or {})}
     message, result = _simp_result(local_mode, documented)
     try:
         retrieval = build_shadow_retrieval(result, message, {}, {}, config, {})
@@ -214,3 +214,9 @@ def test_carried_evidence_keeps_a_full_section():
     item = {"id": "R1", "title": "IN0504.pdf", "text": section, "metadata": {"provider": "henkia_ke"}}
     assert _compact_evidence(item)["text"] == " ".join(section.split())
     assert _compact_evidence_row(item)["text"] == " ".join(section.split())
+
+
+def test_primary_mode_reads_full_document_even_when_local_is_documented():
+    retrieval, reads, searches = _run("procedural_documented_answer", True, extra={"KNOWLEDGE_PUBLISH_MODE": "primary"})
+    assert reads == [URI] and searches == []
+    assert retrieval["procedural_expansion"]["adapter"] == "henkia_ke_full_document"
