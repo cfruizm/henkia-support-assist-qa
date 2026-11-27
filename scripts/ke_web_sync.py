@@ -305,9 +305,24 @@ def upload(args) -> None:
         if args.ingest and uploaded:
             ok, detail = client.tool("ingerir_base", {"base": args.base})
             print("Ingesta:", "lanzada" if ok else "no lanzada", "|", detail[:300])
+            if not ok and "4006" in detail:
+                print("KE tiene otro trabajo en curso; cuando termine, ejecuta este script con --ingest-only --base", args.base)
     finally:
         client.close()
     print(f"Subidos {uploaded}, sin cambios {unchanged}, fallidos {failed}. Estado: {state_path}")
+
+
+def ingest_only(args) -> None:
+    """Launch ingerir_base alone. KE answers 409 (HENKIA-RAG-4006) while another job
+    runs, e.g. the graph update a document deletion starts; run this afterwards."""
+    if not UUID_RE.match(args.base or ""):
+        sys.exit("--base debe ser el uuid de la base destino.")
+    client = McpClient(_write_key())
+    try:
+        ok, detail = client.tool("ingerir_base", {"base": args.base})
+    finally:
+        client.close()
+    print("Ingesta:", "lanzada" if ok else "no lanzada", "|", detail[:300])
 
 
 def prune(client: McpClient, base: str, current: set[str], state: dict, state_path: pathlib.Path) -> None:
@@ -332,6 +347,7 @@ def main(argv=None) -> None:
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--discover", action="store_true")
     mode.add_argument("--upload", action="store_true", help="Sube lo preparado por --dry-run (requiere --base)")
+    mode.add_argument("--ingest-only", action="store_true", help="Solo lanza la ingesta de --base (p. ej. tras un 409)")
     parser.add_argument("--base", default="", help="uuid de la base KE destino")
     parser.add_argument("--ingest", action="store_true", help="Lanza la ingesta al terminar la subida")
     parser.add_argument("--prune", action="store_true", help="Borra páginas propias que ya no están en el manifiesto")
@@ -347,6 +363,8 @@ def main(argv=None) -> None:
         dry_run(args)
     elif args.discover:
         discover(args)
+    elif args.ingest_only:
+        ingest_only(args)
     else:
         upload(args)
 
