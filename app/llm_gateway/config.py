@@ -33,7 +33,7 @@ def load_gateway_config(secrets) -> dict:
         "session_reserve_tokens": budget["session_reserve_tokens"],
         "budget_configuration": budget,
         "orchestrator_max_tokens": max(64, min(4096, int(_get(secrets, "LLM_ORCHESTRATOR_MAX_TOKENS", 220)))),
-        "understanding_max_tokens": max(320, min(4096, int(_get(secrets, "LLM_UNDERSTANDING_MAX_TOKENS", 360)))),
+        "understanding_max_tokens": max(320, min(4096, int(_get(secrets, "LLM_UNDERSTANDING_MAX_TOKENS", 800)))),
         "answer_max_tokens": max(128, min(4096, int(_get(secrets, "LLM_ANSWER_MAX_TOKENS", 900)))),
         # Long-form documented answers (procedures, exhaustive lists) need more room than
         # conversational replies; a separate cap keeps short replies at answer_max_tokens.

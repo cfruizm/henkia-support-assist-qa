@@ -8,7 +8,7 @@ class BudgetPolicy:
     max_session_calls:int=60
     max_session_tokens:int=52000
     reserve_tokens:int=2200
-    understanding_max_tokens:int=350
+    understanding_max_tokens:int=800
     response_max_tokens:int=280
     @classmethod
     def for_mode(cls,mode:str):

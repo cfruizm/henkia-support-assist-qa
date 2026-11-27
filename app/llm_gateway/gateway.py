@@ -51,7 +51,7 @@ class LLMGateway:
     def _reserve_output(self,request):
         purpose=str(request.purpose or "").casefold();role=str(getattr(request,"model_role","") or "").casefold()
         if "judge" in purpose:configured=int(self.config.get("evidence_judge_max_tokens",360))
-        elif "understanding" in purpose:configured=int(self.config.get("understanding_max_tokens",360))
+        elif "understanding" in purpose:configured=int(self.config.get("understanding_max_tokens",800))
         elif role=="orchestrator" or "orchestrator" in purpose:configured=int(self.config.get("orchestrator_max_tokens",220))
         elif "procedural_answer" in purpose or "documented_answer" in purpose:configured=int(self.config.get("document_answer_max_tokens",1800))
         else:configured=int(self.config.get("answer_max_tokens",900))

@@ -27,3 +27,12 @@ def test_procedural_contract_carries_output_budget():
     assert ProceduralAnswerComposer(None, 5000).max_tokens == 1800
     contract = _response_contract({}, {"query": {"fields": {"topic_relation": "new_topic", "user_act": "new_request"}}}, [], 1800)
     assert contract["output_budget_tokens"] == 1800 and contract["mode"] == "full_document_procedure"
+
+
+def test_understanding_contract_has_room_for_reported_attempts():
+    from app.agent_core_v2_clean.budget import BudgetPolicy
+    from app.agent_core_v2_clean.understanding import ConversationUnderstanding
+
+    policy = BudgetPolicy()
+    assert ConversationUnderstanding(None, policy.understanding_max_tokens).max_tokens == 800
+    assert _granted("agent_core_v2_clean_understanding", policy.understanding_max_tokens) == 800

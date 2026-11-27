@@ -110,8 +110,14 @@ def _hoist_nested_schema_fields(raw,aliases):
   else:
    raw.pop("topic_relation",None);aliases["topic_relation:object"]="topic_relation:dropped"
 
+# Ceiling for one understanding contract. 350/360/420 caps cut the JSON of a
+# reported attempt (case updates, observations, translations) at 350 tokens in
+# QA ("Expecting ',' delimiter"); normal turns use about 250-300 tokens.
+UNDERSTANDING_MAX_TOKENS=800
+
+
 class ConversationUnderstanding:
- def __init__(self,gateway,max_tokens=300):self.gateway=gateway;self.max_tokens=max(220,min(420,int(max_tokens)));self.last_provider_result={};self.contract_valid=False;self.validation_error=None;self.normalization={"removed_goal_update_keys":[]}
+ def __init__(self,gateway,max_tokens=300):self.gateway=gateway;self.max_tokens=max(220,min(UNDERSTANDING_MAX_TOKENS,int(max_tokens)));self.last_provider_result={};self.contract_valid=False;self.validation_error=None;self.normalization={"removed_goal_update_keys":[]}
  def _degraded(self,memory,reason):return TurnUnderstanding("follow_up",memory.pending_goal.intent or "unknown","same_topic","uncertain",memory.pending_goal.summary or memory.active_topic or "",False,{},[],False,None,False,0.,reason,True)
  def _degraded_current(self,message,memory,reason):
   """Build a bounded semantic contract when the understanding provider is unavailable.
