@@ -47,9 +47,33 @@ def _fetched_rows(fetch_same_document,question,target):
   rows.append({"title":item.get("title") or meta.get("title") or "","source":target,"url":item.get("url") or "","page":str(page),"text":text,"metadata":meta,"origin":"exhaustive_same_document_fetch"})
  return rows
 
+_FOLLOWUP_ACTS={"follow_up","request_elaboration","answer_to_question"}
+
+def followup_value_request(retrieval,question):
+ """A follow-up that asks for a property whose values the document lists.
+
+ QA: "¿Y los puertos?" after the SDS requirements answered with no port because
+ the exhaustive read required marker words ("cuáles", "lista", "todos"). Without
+ a word list: a same-topic follow-up whose requested terms appear, by stem, in
+ fragments of the accepted document that carry numeric values.
+ """
+ from .text_stems import stem_index,term_matches
+ fields=((retrieval or {}).get("query") or {}).get("fields") or {}
+ if str(fields.get("user_act") or "") not in _FOLLOWUP_ACTS:return False
+ if str(fields.get("topic_relation") or "") not in {"same_topic","same_topic_refinement"}:return False
+ terms={t for t in _property_terms(question) if not t.isdigit()}
+ if not terms:return False
+ rows=list((retrieval or {}).get("generation_evidence") or (retrieval or {}).get("evidence") or [])+list((retrieval or {}).get("diagnostic_evidence") or [])
+ for row in rows:
+  text=str(row.get("text") or "")
+  if len(_numeric_values(text))<2:continue
+  available=stem_index({w for w in re.findall(r"[a-z0-9]+",_norm(text)) if len(w)>=3})
+  if any(term_matches(t,available) for t in terms):return True
+ return False
+
 def augment_exhaustive_numeric_evidence(retrieval,question,fetch_same_document=None):
  diagnostic={"activated":False,"reason":"not_exhaustive_numeric_request","selected_document":None,"base_count":0,"added_count":0,"final_count":0}
- if not expects_exhaustive_numeric_list(question):return deepcopy(retrieval or {}),diagnostic
+ if not (expects_exhaustive_numeric_list(question) or followup_value_request(retrieval,question)):return deepcopy(retrieval or {}),diagnostic
  out=deepcopy(retrieval or {});verdict=out.get("evidence_verdict") or {}
  base=list(verdict.get("selected_evidence") or out.get("generation_evidence") or out.get("evidence") or [])
  diagnostic["base_count"]=len(base);identities=[_identity(x) for x in base if _identity(x)]

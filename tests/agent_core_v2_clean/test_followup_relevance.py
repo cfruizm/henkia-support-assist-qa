@@ -87,3 +87,33 @@ def test_scope_accepts_a_registered_product_named_by_the_understanding():
     unrelated = {**u, "canonical_subject": "Salesforce", "goal_updates": {"subject": "Salesforce", "operation": "exportar oportunidades"}}
     out, trace = reconcile_scope("¿Cómo exporto oportunidades en Salesforce?", unrelated, {})
     assert out["domain_relevance"] == "out_of_scope", trace
+
+
+def test_followup_without_subject_continues_the_active_topic():
+    from app.agent_core_v2_clean.scope_authority import reconcile_scope
+
+    u = {"intent": "procedural", "user_act": "request_elaboration", "topic_relation": "same_topic", "domain_relevance": "in_scope",
+         "canonical_subject": None, "reference_relation": "none", "goal_updates": {"operation": "registrar"}}
+    before = {"active_subject": "SIMP", "subject_history": ["SIMP"]}
+    out, trace = reconcile_scope("¿Cómo me registro por primera vez?", u, before)
+    assert out["domain_relevance"] == "in_scope" and not out.get("needs_clarification"), trace
+    # Without an active topic the same message still needs scope clarification.
+    out, trace = reconcile_scope("¿Cómo me registro por primera vez?", u, {})
+    assert trace["reason"] == "independent_request_without_domain_object_requires_scope_clarification", trace
+
+
+def test_followup_value_request_activates_the_document_list():
+    from app.agent_core_v2_clean.documented_fact_coverage import augment_exhaustive_numeric_evidence, followup_value_request
+
+    table = "Puerto 443 TCP salida. Puerto 5222 TCP mensajería. Puerto 161 UDP SNMP. Puerto 3910 TCP impresoras."
+    base = [{"id": "R1", "title": "SDS Requirements", "source": "sds.pdf", "page": "5", "text": "Requisitos de red: el monitor usa varios puertos de Internet e intranet."}]
+    retrieval = {"generation_evidence": base, "evidence": base,
+                 "diagnostic_evidence": base + [{"id": "D1", "title": "SDS Requirements", "source": "sds.pdf", "page": "6", "text": table}],
+                 "evidence_verdict": {"selected_evidence": base},
+                 "query": {"fields": {"user_act": "request_elaboration", "topic_relation": "same_topic"}}}
+    assert followup_value_request(retrieval, "¿Y los puertos?")
+    out, diag = augment_exhaustive_numeric_evidence(retrieval, "¿Y los puertos?")
+    assert diag["activated"], diag
+    assert any("5222" in x["text"] for x in out["generation_evidence"])
+    new_topic = {**retrieval, "query": {"fields": {"user_act": "new_request", "topic_relation": "new_topic"}}}
+    assert not followup_value_request(new_topic, "¿Y los puertos?")

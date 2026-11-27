@@ -66,14 +66,22 @@ def reconcile_scope(message,understanding,state_before=None):
         and (memory_origin or subject_known)
         and (subject_known or bool(before.get("active_subject")) or bool(before.get("subject_history")))
     )
-    referential=continuity_valid or (relation=="same_topic" and (memory_origin or structured_reference))
+    # Scope runs on the provider contract, before reference resolution fills the
+    # subject. A follow-up the provider marks as same_topic, in a conversation with an
+    # active technical subject, continues that subject (QA: "¿Cómo me registro por
+    # primera vez?" after the SIMP dashboard asked whether it was about printing).
+    provider_followup=bool(
+        act in _CONTINUITY_ACTS and relation in {"same_topic","same_topic_refinement"}
+        and (before.get("active_subject") or before.get("subject_history"))
+    )
+    referential=continuity_valid or provider_followup or (relation=="same_topic" and (memory_origin or structured_reference))
     independent=not continuity_valid and (relation in {"new_topic","independent"} or act in {"new_request","independent_question","topic_change"} or not referential)
     exempt=intent in _EXEMPT_INTENTS or act in _EXEMPT_ACTS
     evidence={
         "registered_entities":entities,"generic_domain_signal":generic_signal,
         "referential":referential,"independent":independent,"explicit_subject":bool(subject),
         "structured_reference":structured_reference,"memory_origin":memory_origin,
-        "subject_known":subject_known,"continuity_valid":continuity_valid,
+        "subject_known":subject_known,"continuity_valid":continuity_valid,"provider_followup":provider_followup,
     }
     if exempt:
         return u,{"applied":False,"terminal":False,"reason":"scope_authority_exempt_conversational_act","original_scope":original,"final_scope":original,"evidence":evidence}

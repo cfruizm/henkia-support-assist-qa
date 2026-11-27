@@ -87,7 +87,7 @@ def _primary_decision(local_answer: Mapping[str, Any], ke_answer: Mapping[str, A
     escalation...), or when KE is partial while local is complete.
     """
     local_answer, ke_answer = _mapping(local_answer), _mapping(ke_answer)
-    local_documented = bool(local_answer.get("documented_evidence_used")) or _is_documented(local_answer)
+    local_documented = _local_documented(local_answer)
     ke_partial = str(ke_answer.get("mode") or "").endswith("_partial")
     local_partial = str(local_answer.get("mode") or "").endswith("_partial")
     checks = {
@@ -113,7 +113,7 @@ def complement_decision(mode: str, local_answer: Mapping[str, Any], ke_answer: M
     if mode == "primary":
         return _primary_decision(local_answer, ke_answer, ke_route, isolation)
     local_answer = _mapping(local_answer)
-    local_documented = bool(local_answer.get("documented_evidence_used")) or _is_documented(local_answer)
+    local_documented = _local_documented(local_answer)
     checks = {
         "mode_complement": mode == "complement",
         "local_not_documented": not local_documented,
@@ -196,7 +196,10 @@ def _expand_from_document(selected: list, fetcher: Callable | None, query: Any, 
 
 def _local_documented(answer: Any) -> bool:
     answer = _mapping(answer)
-    return bool(answer.get("documented_evidence_used")) or _is_documented(answer)
+    # The answer mode decides, not documented_evidence_used: an internal-knowledge
+    # answer that cites one fragment carries that flag (QA: Find-Me follow-up kept a
+    # general answer over a documented KE one).
+    return _is_documented(answer)
 
 
 def document_queries(message: str, result: Mapping[str, Any]) -> list[str]:

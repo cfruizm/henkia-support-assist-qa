@@ -230,3 +230,12 @@ def test_fenced_code_inside_a_list_stays_closed():
     assert "        `sudo lpadmin -p Find-Me -E`" in text
     assert "### 3. Configurar en PaperCut" in text
     assert text.count("```") % 2 == 0
+
+
+def test_internal_knowledge_with_a_citation_is_not_a_documented_local_answer():
+    mixed = {"mode": "controlled_internal_knowledge", "documented_evidence_used": True, "text": "⚠️ general [R1]"}
+    ke_partial = {"mode": "documented_answer_partial", "documented_evidence_used": True, "text": "ke [R1]"}
+    route, iso = {"evidence_status": "partial"}, {"isolated": True}
+    decision = complement_decision("primary", mixed, ke_partial, route, iso)
+    assert decision["applied"] and decision["reason"] == "ke_primary_over_undocumented_local", decision
+    assert complement_decision("complement", mixed, ke_partial, route, iso)["applied"]

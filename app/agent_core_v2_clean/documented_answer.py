@@ -10,7 +10,7 @@ from .source_footer import compact_sources, strip_generated_source_footer, with_
 from .diagnostic_language import soften_diagnostic_certainty
 from .guidance_integrity import build_guidance_integrity_contract, integrity_diagnostic
 from .evidence_boundary import normalize_citation_groups
-from .documented_fact_coverage import augment_exhaustive_numeric_evidence,ensure_enumerated_numeric_fact_coverage,expects_exhaustive_numeric_list,numeric_enumeration_evidence_score,collect_compact_numeric_rows
+from .documented_fact_coverage import followup_value_request,augment_exhaustive_numeric_evidence,ensure_enumerated_numeric_fact_coverage,expects_exhaustive_numeric_list,numeric_enumeration_evidence_score,collect_compact_numeric_rows
 
 
 # Set by the KE route while it runs (app.knowledge_gateway.agent_core_shadow):
@@ -83,7 +83,7 @@ def _candidate_rows(retrieval):
 
 def evidence_pack(retrieval, message="", understanding=None, max_items=6, max_chars=6200):
     followup=(str((understanding or {}).get("user_act") or "") in {"follow_up","answer_to_question","request_elaboration","attempt_result","reported_failure"} or str((understanding or {}).get("topic_relation") or "") in {"same_topic","return_to_previous"})
-    enumerative_numeric=expects_exhaustive_numeric_list(message)
+    enumerative_numeric=expects_exhaustive_numeric_list(message) or followup_value_request(retrieval,message)
     if followup and not enumerative_numeric:max_items,max_chars=min(max_items,4),min(max_chars,4500)
     """Select a diverse, relevance-ordered evidence set without losing later pages."""
     rows = _candidate_rows(retrieval)
