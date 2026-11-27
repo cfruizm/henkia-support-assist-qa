@@ -220,3 +220,31 @@ def test_primary_mode_reads_full_document_even_when_local_is_documented():
     retrieval, reads, searches = _run("procedural_documented_answer", True, extra={"KNOWLEDGE_PUBLISH_MODE": "primary"})
     assert reads == [URI] and searches == []
     assert retrieval["procedural_expansion"]["adapter"] == "henkia_ke_full_document"
+
+
+def test_a_failed_base_is_not_retried_in_the_same_conversation():
+    calls = []
+
+    def reader(kb_id, uri):
+        calls.append(kb_id)
+        return {"ok": False, "error_code": "ConnectionError", "latency_ms": 16000.0}
+    store = {}
+    first = full.apply_full_document(_accepted(), reader, store, "acceso")
+    second = full.apply_full_document(_accepted(), reader, store, "acceso")
+    assert first["reason"] == "read_failed" and second["reason"] == "skipped_after_failure"
+    assert calls == ["kb2"]
+
+
+def test_sync_names_are_readable_and_the_app_shows_the_title():
+    import sys, pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "scripts"))
+    import ke_web_sync as sync
+    from app.knowledge_gateway.agent_core_shadow import _display_name
+
+    url = "https://www.papercut.com/kb/Main/SetupFindMePrintingUsingPaperCutMF/"
+    name = sync.document_name(url, "How to set up Find-Me printing with PaperCut MF")
+    assert name.startswith("How to set up Find-Me printing with PaperCut MF [pcweb-") and name.endswith("].md")
+    assert sync.is_managed_name(name) and sync.is_managed_name("www-papercut-com-kb-x-1234abcd.md")
+    assert not sync.is_managed_name("Administrator Guide - HP Access Control.pdf")
+    assert _display_name(name) == "How to set up Find-Me printing with PaperCut MF"
+    assert _display_name("Administrator Guide - HP Access Control.pdf") == "Administrator Guide - HP Access Control.pdf"

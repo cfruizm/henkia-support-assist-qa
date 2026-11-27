@@ -69,13 +69,29 @@ def index_pages(index_path: pathlib.Path, collection: str) -> list[dict]:
     return sorted(pages.values(), key=lambda p: p["url"])
 
 
-def document_name(url: str) -> str:
-    """Stable KE document name from the URL (the name is the update key)."""
-    parsed = urlparse(url)
-    path = unicodedata.normalize("NFKD", parsed.path).encode("ascii", "ignore").decode().casefold()
-    slug = re.sub(r"[^a-z0-9]+", "-", f"{parsed.netloc}-{path}").strip("-")
+NAME_MARKER = "pcweb"
+MANAGED_NAME_RE = re.compile(r"\[" + NAME_MARKER + r"-[0-9a-f]{8}\]\.md$")
+
+
+def document_name(url: str, title: str = "") -> str:
+    """KE document name: the page title plus a code derived from the URL.
+
+    The KE search does not return document_title, so the name is what users see as
+    the source title. The URL code keeps the name unique and stable (the name is the
+    update key); a renamed page title creates a new name and --prune removes the old.
+    """
     digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:8]
-    return f"{slug[:180]}-{digest}.md"
+    clean = " ".join(re.sub(r'[\/:*?"<>|\[\]#%]+', " ", str(title or "")).split())[:150].strip(" .-")
+    if not clean:
+        parsed = urlparse(url)
+        path = unicodedata.normalize("NFKD", parsed.path).encode("ascii", "ignore").decode().casefold()
+        clean = re.sub(r"[^a-z0-9]+", "-", f"{parsed.netloc}-{path}").strip("-")[:150]
+    return f"{clean} [{NAME_MARKER}-{digest}].md"
+
+
+def is_managed_name(name: str) -> bool:
+    """Documents this script owns: current names and the first-version URL slugs."""
+    return bool(MANAGED_NAME_RE.search(name or "")) or str(name or "").startswith(MANAGED_PREFIX)
 
 
 def _date(value) -> str | None:
@@ -139,7 +155,7 @@ def build_document(page: dict, html: str) -> dict | None:
     document_date = _date(getattr(meta, "date", None))
     if document_date:
         metadata["document_date"] = document_date
-    return {"name": document_name(page["url"]), "text": body, "metadata": {k: v for k, v in metadata.items() if v}}
+    return {"name": document_name(page["url"], title), "text": body, "metadata": {k: v for k, v in metadata.items() if v}}
 
 
 def dry_run(args) -> None:
@@ -210,7 +226,7 @@ def discover(args) -> None:
     print("Esquemas de subida/ingesta guardados en", target)
 
 
-MANAGED_PREFIX = "www-papercut-com-"  # names this script owns; nothing else is ever deleted
+MANAGED_PREFIX = "www-papercut-com-"  # first-version names; see is_managed_name (nothing else is deleted)
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 # The only MCP tools this script calls. Base or provider administration is never used.
 ALLOWED_TOOLS = {"subir_documento", "ingerir_base", "listar_documentos", "borrar_documento"}
@@ -301,7 +317,7 @@ def prune(client: McpClient, base: str, current: set[str], state: dict, state_pa
         print("No se pudo listar la base; no se borra nada.", listing[:200])
         return
     names = {d.get("name") for d in (json.loads(listing).get("documentos") or [])}
-    stale = sorted(n for n in names if n and n.startswith(MANAGED_PREFIX) and n not in current)
+    stale = sorted(n for n in names if n and is_managed_name(n) and n not in current)
     for name in stale:
         ok, detail = client.tool("borrar_documento", {"base": base, "nombre": name})
         print(f"Borrado {'ok' if ok else 'fallido'}: {name} {'' if ok else detail[:200]}")

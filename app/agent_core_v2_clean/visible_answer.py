@@ -1,5 +1,6 @@
 from __future__ import annotations
 import re
+import textwrap
 
 SOURCE_RE=re.compile(r"(?is)(?:^|\n)\s*\*\*Fuente(?:s)? documental(?:es)?:\*\*\s*(.+?)\s*$")
 PARTIAL_RE=re.compile(r"(?ims)^\s*>?\s*(?:ℹ️\s*)?(?:\*\*)?Cobertura(?:\s+documental)?\s+parcial\s*:(?:\*\*)?\s*(.+?)(?=\n\n|\Z)")
@@ -25,11 +26,20 @@ def _split_long(paragraph,max_chars=560):
 
 
 def _normalize_code(text):
+    """Short fenced snippets become inline code; longer blocks keep the fence indentation.
+
+    A fence inside a list item is indented. Rewriting it with the closing fence at
+    column 0 left the block open, so everything after it rendered as code
+    (QA: PaperCut Find-Me answer, Linux steps). Body and closing fence now keep the
+    opening fence's indentation.
+    """
     def replace(match):
-        language=(match.group(1) or "").strip();body=(match.group(2) or "").strip()
-        if "\n" not in body and len(body)<=180:return f"`{body}`"
-        return f"```{language}\n{body}\n```"
-    return re.sub(r"```([^\n`]*)\n(.*?)```",replace,text,flags=re.S)
+        indent=match.group(1) or "";language=(match.group(2) or "").strip()
+        body=textwrap.dedent((match.group(3) or "").rstrip()).strip("\n")
+        if "\n" not in body.strip() and len(body.strip())<=180:return f"{indent}`{body.strip()}`"
+        lines="\n".join((indent+line) if line.strip() else "" for line in body.splitlines())
+        return f"{indent}```{language}\n{lines}\n{indent}```"
+    return re.sub(r"(?m)^([ \t]*)```([^\n`]*)\n(.*?)\n?[ \t]*```",replace,text,flags=re.S)
 
 
 def _normalize_incomplete_numbering(text):
@@ -87,5 +97,5 @@ def format_visible_answer(text,answer_mode=None,knowledge_mode=None,finish_reaso
     if body:sections.append(body)
     if source:sections.append(f"---\n\n*Fuente documental:* {source}")
     formatted=re.sub(r"\n{3,}","\n\n","\n\n".join(sections).strip())
-    diagnostic={"applied":formatted!=str(text or "").strip(),"version":"q6_visible_answer_v1_4","internal_warning_compacted":internal,"internal_warning_icon":"⚠️" if internal else None,"partial_notice_repositioned":bool(partial),"partial_notice_icon":"ℹ️" if partial else None,"partial_variant_normalized":bool(partial),"incomplete_numbering_found":incomplete["found"],"incomplete_numbering_strategy":incomplete["strategy"],"source_deemphasized":bool(source),"orphan_structure_removed":removed,"screen_pdf_same_markdown":True}
+    diagnostic={"applied":formatted!=str(text or "").strip(),"version":"q6_visible_answer_v1_5","internal_warning_compacted":internal,"internal_warning_icon":"⚠️" if internal else None,"partial_notice_repositioned":bool(partial),"partial_notice_icon":"ℹ️" if partial else None,"partial_variant_normalized":bool(partial),"incomplete_numbering_found":incomplete["found"],"incomplete_numbering_strategy":incomplete["strategy"],"source_deemphasized":bool(source),"orphan_structure_removed":removed,"screen_pdf_same_markdown":True}
     return formatted,diagnostic

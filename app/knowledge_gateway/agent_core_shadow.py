@@ -6,6 +6,7 @@ KE answer is documented and isolated.
 """
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from typing import Any, Callable, Mapping
 
@@ -298,6 +299,15 @@ def _enabled(config: Any) -> bool:
     return str(raw).strip().casefold() not in {"0", "false", "no", "off", "disabled"}
 
 
+_SYNC_SUFFIX = re.compile(r"\s*\[[a-z]+-[0-9a-f]{8}\]\.(?:md|txt|html?)$", re.I)
+
+
+def _display_name(source_name: str) -> str:
+    """Readable title from a KE file name: drops a sync code like " [pcweb-4ab81f21].md"."""
+    cleaned = _SYNC_SUFFIX.sub("", str(source_name or "")).strip()
+    return cleaned or str(source_name or "")
+
+
 def ke_evidence_rows(normalized_result: Mapping[str, Any]) -> list[dict]:
     """Adapt KE rows to the canonical evidence contract without inventing pages."""
     rows = list(_mapping(normalized_result).get("results") or [])
@@ -308,7 +318,7 @@ def ke_evidence_rows(normalized_result: Mapping[str, Any]) -> list[dict]:
         source_name = str(row.get("source_name") or "Fuente KE sin titulo").strip()
         # The page or document title the KE stores (document_title); the file name
         # (e.g. a URL slug) is only a fallback. Title terms weigh in the verdict.
-        display_title = str(row.get("document_title") or "").strip() or source_name
+        display_title = str(row.get("document_title") or "").strip() or _display_name(source_name)
         source = str(row.get("document_uri") or row.get("file_id") or source_name).strip()
         reference_url = str(row.get("reference_url") or "").strip()
         metadata = {

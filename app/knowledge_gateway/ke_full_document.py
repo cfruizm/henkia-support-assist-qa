@@ -16,6 +16,10 @@ from typing import Any, Callable, Mapping
 from app.agent_core_v2_clean.text_stems import collapse_by_stem, stem_index, term_matches, normalize
 
 TEXT_CACHE_KEY = "ke_document_text_cache"
+# Bases where a full-document read failed in this conversation. QA: leer_documento
+# failed twice on the Impresion base (ConnectionError after 13-16 s) while it works
+# on OperacionSIMP; retrying on every turn only made users wait.
+FAILED_BASES_KEY = "ke_full_document_failed_bases"
 MAX_CACHED_DOCUMENTS = 3
 SECTION_CHARS = 1500
 MAX_SECTIONS = 8
@@ -131,6 +135,11 @@ def _cache_text(store: Any, uri: str, text: str) -> None:
         cache.pop(next(iter(cache)))
 
 
+def _mark_failed(store: Any, kb_id: str, code: str) -> None:
+    if isinstance(store, dict) and kb_id:
+        store.setdefault(FAILED_BASES_KEY, {})[kb_id] = str(code)
+
+
 def apply_full_document(retrieval: dict, reader: Callable, store: Any, request_text: str) -> dict:
     """Replace the accepted KE chunks with the relevant sections of the full text.
 
@@ -146,13 +155,18 @@ def apply_full_document(retrieval: dict, reader: Callable, store: Any, request_t
     kb_id = str(metadata.get("knowledge_base_id") or "")
     text = _cached_text(store, uri)
     trace = {"used": False, "cached": text is not None}
+    failed = store.get(FAILED_BASES_KEY) if isinstance(store, dict) else None
+    if text is None and kb_id and (failed or {}).get(kb_id):
+        return {**trace, "reason": "skipped_after_failure", "error_code": failed[kb_id]}
     if text is None:
         try:
             raw = reader(kb_id, uri) or {}
         except Exception as exc:  # network/contract failure: keep the chunks
+            _mark_failed(store, kb_id, type(exc).__name__)
             return {**trace, "reason": "read_error", "error_code": type(exc).__name__}
         trace.update(latency_ms=raw.get("latency_ms"), schema_cached=raw.get("schema_cached"))
         if not raw.get("ok") or not raw.get("text"):
+            _mark_failed(store, kb_id, raw.get("error_code") or "read_failed")
             return {**trace, "reason": "read_failed", "error_code": raw.get("error_code")}
         text = strip_repeated_lines(str(raw["text"]))
         _cache_text(store, uri, text)

@@ -217,3 +217,16 @@ def test_execute_primary_keeps_local_when_ke_is_not_documented():
                     {"answer_context": {}}, _runner("controlled_internal_knowledge", documented=False))
     assert not block["publication"]["applied"] and block["publication"]["reason"] == "not_ke_documented"
     assert result["answer"]["text"] == "Respuesta publicada [R1]."
+
+
+def test_fenced_code_inside_a_list_stays_closed():
+    from app.agent_core_v2_clean.visible_answer import format_visible_answer
+
+    raw = ("**2. Crear la cola**\nPasos:\n\n*   **Linux:**\n    1. Instale CUPS:\n        ```bash\n        sudo apt update\n"
+           "        sudo apt install cups\n        ```\n    2. Agregue la impresora:\n        ```bash\n        sudo lpadmin -p Find-Me -E\n"
+           "        ```\n\n**3. Configurar en PaperCut**\nInicie sesión en la consola [R4].")
+    text, _ = format_visible_answer(raw, "procedural_documented_answer", "documented_only", "stop")
+    assert "        ```bash\n        sudo apt update\n        sudo apt install cups\n        ```" in text, text
+    assert "        `sudo lpadmin -p Find-Me -E`" in text
+    assert "### 3. Configurar en PaperCut" in text
+    assert text.count("```") % 2 == 0
