@@ -424,6 +424,12 @@ def _primary_continuity_selection(out,candidates,wanted):
 def _candidate_pool(out, understanding=None):
     primary = list(out.get("generation_evidence") or out.get("evidence") or [])
     diagnostic = list(out.get("diagnostic_evidence") or [])
+    # A value follow-up the active document cannot answer: the documents of the turn
+    # that list the requested values compete (QA: "¿Y los puertos?"). Checked first:
+    # later branches return the whole pool and let the install procedure win again.
+    value_first = value_followup_release(out)
+    if value_first:
+        return [item for item in _dedup(primary + diagnostic) if _identity(item) in value_first]
     # A conceptual definition may be present in a different candidate document than
     # the top lexical hit. Subject-claim authorization below remains binding, so
     # widening only the candidate pool does not authorize unrelated products.
@@ -431,11 +437,6 @@ def _candidate_pool(out, understanding=None):
         return _dedup(primary + diagnostic)
     if not primary:
         return _dedup(diagnostic)
-    value_documents = value_followup_release(out)
-    if value_documents:
-        # A value follow-up the active document cannot answer: the documents of the
-        # turn that list the requested values compete (QA: "¿Y los puertos?").
-        return [item for item in _dedup(primary + diagnostic) if _identity(item) in value_documents]
     identities = {_identity(item) for item in primary if _identity(item)}
     # Diagnostic chunks from the already-authorized document are eligible for
     # follow-up progression. This does not authorize unrelated documents.

@@ -168,3 +168,23 @@ def test_value_followup_verdict_selects_the_document_with_the_table():
     verdict = apply_unified_evidence_verdict(retrieval, "¿Y los puertos?", understanding)["evidence_verdict"]
     sources = {x["source"] for x in verdict.get("selected_evidence") or []}
     assert "kb://sds-req" in sources, verdict.get("reason")
+
+
+def test_value_followup_without_generation_evidence_still_prefers_the_value_document():
+    from app.agent_core_v2_clean.unified_evidence_authority import apply_unified_evidence_verdict
+
+    procedure = {"id": "R1", "title": "DA0403 Instalar monitor SDS", "source": "sp://da0403", "page": "",
+                 "text": "Requisitos para instalar el monitor SDS: sistema operativo Windows y acceso a Internet.", "semantic_fit": {"score": 0.4}}
+    table = {"id": "D2", "title": "HP SDS Manager System Requirements", "source": "kb://sds-req", "page": "4",
+             "text": "Puertos requeridos para el monitor SDS: Puerto 443 TCP salida, Puerto 161 UDP SNMP, Puerto 427 UDP SLP.", "semantic_fit": {"score": 0.35}}
+    retrieval = {"ok": True, "generation_evidence": [], "evidence": [], "diagnostic_evidence": [procedure, table],
+                 "query": {"fields": {"previous_evidence_role": "comparison_only", "user_act": "request_elaboration",
+                                      "topic_relation": "same_topic_changed_scope", "current_message": "¿Y los puertos?",
+                                      "goal": "Requisitos para instalar HP SDS Monitor", "intent": "requirements",
+                                      "details": {"subject": "HP SDS Monitor"}}},
+                 "_answer_context": {"source_identities": ["sp://da0403"]}}
+    understanding = {"intent": "requirements", "user_act": "request_elaboration", "topic_relation": "same_topic",
+                     "current_goal": "Conocer los puertos de HP SDS Monitor", "canonical_subject": "HP SDS Monitor",
+                     "goal_updates": {"subject": "HP SDS Monitor", "focus": "puertos"}}
+    verdict = apply_unified_evidence_verdict(retrieval, "¿Y los puertos?", understanding)["evidence_verdict"]
+    assert {x["source"] for x in verdict.get("selected_evidence") or []} == {"kb://sds-req"}, verdict.get("reason")
