@@ -19,6 +19,9 @@ PRODUCT_ENTITY_REGISTRY = {
         "aliases": [
             "papercut mf",
             "papercut",
+            # PaperCut MF feature named alone by users ("los trabajos de Find-Me...").
+            "find-me",
+            "findme",
         ],
         "vendor": "PaperCut",
         "entity_type": "software_platform",

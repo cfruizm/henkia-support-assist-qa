@@ -73,3 +73,17 @@ def test_procedural_pack_keeps_a_chunk_that_answers_the_request_without_marker_v
     packed = evidence_pack(retrieval, terms=terms)
     assert [x["id"] for x in packed] == ["R1"], (terms, packed)
     assert evidence_pack(retrieval) == []  # previous behavior: neither chunk has a marker verb
+
+
+def test_scope_accepts_a_registered_product_named_by_the_understanding():
+    from app.agent_core_v2_clean.scope_authority import reconcile_scope
+
+    u = {"intent": "troubleshooting", "user_act": "new_request", "topic_relation": "new_topic", "domain_relevance": "in_scope",
+         "canonical_subject": "Find-Me", "subject_origin": "current_message",
+         "goal_updates": {"product": "PaperCut", "subject": "Find-Me", "symptom": "trabajos desaparecen antes de liberarlos"}}
+    out, trace = reconcile_scope("Cambiando de tema, los trabajos de Find-Me desaparecen de la cola antes de liberarlos, ¿qué reviso?", u, {})
+    assert out["domain_relevance"] == "in_scope", trace
+    assert trace["reason"] != "independent_subject_without_printing_domain_evidence"
+    unrelated = {**u, "canonical_subject": "Salesforce", "goal_updates": {"subject": "Salesforce", "operation": "exportar oportunidades"}}
+    out, trace = reconcile_scope("¿Cómo exporto oportunidades en Salesforce?", unrelated, {})
+    assert out["domain_relevance"] == "out_of_scope", trace

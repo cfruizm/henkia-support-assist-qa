@@ -49,7 +49,12 @@ def reconcile_scope(message,understanding,state_before=None):
     intent=str(u.get("intent") or "unknown").casefold();act=str(u.get("user_act") or "").casefold()
     relation=str(u.get("topic_relation") or "").casefold();origin=str(u.get("subject_origin") or "").casefold()
     reference=str(u.get("reference_relation") or "none").casefold();subject=str(u.get("canonical_subject") or "").strip()
-    entities=_registered_entities(message)
+    # Registered entities in the message or in what the understanding extracted
+    # (subject, product...). QA: "los trabajos de Find-Me desaparecen de la cola"
+    # was closed as out of scope although the understanding named PaperCut.
+    details=u.get("goal_updates") or {}
+    structured=" ".join(str(x or "") for x in (subject,*(details.values() if isinstance(details,dict) else ())))
+    entities=list(dict.fromkeys(_registered_entities(message)+_registered_entities(structured)))
     generic_signal=bool(_DOMAIN_SIGNAL.search(str(message or "")) or _DOCUMENT_SIGNAL.search(str(message or "")))
     known_subjects=_known_subjects(before)
     subject_known=bool(subject and _fold(subject) in known_subjects)
