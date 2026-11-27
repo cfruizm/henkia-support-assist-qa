@@ -89,6 +89,11 @@ def document_name(url: str, title: str = "") -> str:
     return f"{clean} [{NAME_MARKER}-{digest}].md"
 
 
+def local_file_name(url: str) -> str:
+    """Short, stable file name for the prepared document on disk."""
+    return hashlib.sha1(url.encode("utf-8")).hexdigest()[:16] + ".md"
+
+
 def is_managed_name(name: str) -> bool:
     """Documents this script owns: current names and the first-version URL slugs."""
     return bool(MANAGED_NAME_RE.search(name or "")) or str(name or "").startswith(MANAGED_PREFIX)
@@ -178,8 +183,11 @@ def dry_run(args) -> None:
         if document is None:
             skipped.append({"url": page["url"], "reason": f"http_{status}" if status != 200 else "too_little_text"})
             continue
-        (out / "documents" / document["name"]).write_text(document["text"], encoding="utf-8")
-        manifest.append({"name": document["name"], "chars": len(document["text"]), "metadata": document["metadata"]})
+        # Short file name on disk: long page titles exceeded the Windows path limit.
+        file_name = local_file_name(page["url"])
+        (out / "documents" / file_name).write_text(document["text"], encoding="utf-8")
+        manifest.append({"name": document["name"], "file": file_name, "chars": len(document["text"]),
+                         "metadata": document["metadata"]})
         print(f"[{position}/{len(pages)}] ok {document['name'][:80]} ({len(document['text'])} chars)")
     summary = {"pages": len(pages), "documents": len(manifest), "skipped": skipped, "documents_manifest": manifest}
     (out / "manifest.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -288,7 +296,7 @@ def upload(args) -> None:
             if state.get(name) == content_hash:
                 unchanged += 1
                 continue
-            text = (out / "documents" / name).read_text(encoding="utf-8")
+            text = (out / "documents" / entry.get("file", name)).read_text(encoding="utf-8")
             metadata = {k: str(v) for k, v in entry["metadata"].items() if v not in (None, "")}
             ok, detail = client.tool("subir_documento", {"base": args.base, "nombre": name, "contenido": text,
                                                          "codificacion": "texto", "metadatos": metadata})
