@@ -10,6 +10,10 @@ Modes (run from the repository root with the venv; deps in requirements-sync.txt
   --dry-run   Fetch and build documents into --out (no KE request). Review them.
   --discover  List the MCP tools a write-scoped key exposes (upload/ingest/delete),
               to wire the upload to the real tool schema. Prints no credentials.
+  --upload    Upload what --dry-run prepared to --base (MCP subir_documento, one
+              document per call, unchanged pages skipped by content hash);
+              --ingest launches ingerir_base; --prune deletes only pages this
+              script uploaded (name prefix) that left the manifest.
 
 The write key is never stored: it is read from HENKIA_KE_WRITE_KEY or typed
 hidden. It must be a separate M2M key with kb:write and ingest on the target
@@ -140,6 +144,9 @@ def build_document(page: dict, html: str) -> dict | None:
 
 def dry_run(args) -> None:
     pages = index_pages(pathlib.Path(args.index), args.collection)
+    if args.match:
+        needles = [m.strip().casefold() for m in args.match.split(",") if m.strip()]
+        pages = [p for p in pages if any(n in p["url"].casefold() for n in needles)]
     if args.limit:
         pages = pages[: args.limit]
     out = pathlib.Path(args.out)
@@ -203,18 +210,129 @@ def discover(args) -> None:
     print("Esquemas de subida/ingesta guardados en", target)
 
 
+MANAGED_PREFIX = "www-papercut-com-"  # names this script owns; nothing else is ever deleted
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+# The only MCP tools this script calls. Base or provider administration is never used.
+ALLOWED_TOOLS = {"subir_documento", "ingerir_base", "listar_documentos", "borrar_documento"}
+
+
+class McpClient:
+    """Minimal MCP (Streamable HTTP, stateless) client for the KE write tools."""
+
+    def __init__(self, key: str):
+        import requests
+        self.session = requests.Session()
+        self.session.headers.update({"Accept": "application/json, text/event-stream", "Content-Type": "application/json",
+                                     "MCP-Protocol-Version": "2025-06-18", "Authorization": f"Bearer {key}"})
+        self.rid = 0
+        self._rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                 "clientInfo": {"name": "ke-web-sync", "version": "1"}})
+
+    def _rpc(self, method: str, params: dict) -> dict:
+        self.rid += 1
+        response = self.session.post(f"{KE_ROOT}/mcp", timeout=(10, 120),
+                                     json={"jsonrpc": "2.0", "id": self.rid, "method": method, "params": params})
+        text = response.content.decode("utf-8", errors="replace")
+        if not response.ok:
+            return {"error": {"message": f"http_{response.status_code}"}}
+        for line in text.splitlines():
+            if line.startswith("data:"):
+                return json.loads(line[5:].strip())
+        return json.loads(text) if text.strip().startswith("{") else {}
+
+    def tool(self, name: str, arguments: dict) -> tuple[bool, str]:
+        if name not in ALLOWED_TOOLS:
+            raise ValueError(f"tool not allowed: {name}")
+        reply = self._rpc("tools/call", {"name": name, "arguments": arguments})
+        if reply.get("error"):
+            return False, str(reply["error"].get("message") or reply["error"])[:300]
+        result = reply.get("result") or {}
+        text = "\n".join(c.get("text", "") for c in result.get("content") or [] if isinstance(c, dict))
+        return not result.get("isError"), text
+
+    def close(self) -> None:
+        self.session.headers.pop("Authorization", None)
+        self.session.close()
+
+
+def upload(args) -> None:
+    """Upload the documents prepared by --dry-run to one KE base, then ingest."""
+    if not UUID_RE.match(args.base or ""):
+        sys.exit("--base debe ser el uuid de la base destino.")
+    out = pathlib.Path(args.out)
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    documents = manifest["documents_manifest"][: args.limit or None]
+    state_path = pathlib.Path(args.state) if args.state else out / "upload_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    client = McpClient(_write_key())
+    uploaded = unchanged = failed = 0
+    try:
+        for position, entry in enumerate(documents, 1):
+            name, content_hash = entry["name"], entry["metadata"].get("content_hash")
+            if state.get(name) == content_hash:
+                unchanged += 1
+                continue
+            text = (out / "documents" / name).read_text(encoding="utf-8")
+            metadata = {k: str(v) for k, v in entry["metadata"].items() if v not in (None, "")}
+            ok, detail = client.tool("subir_documento", {"base": args.base, "nombre": name, "contenido": text,
+                                                         "codificacion": "texto", "metadatos": metadata})
+            if ok:
+                uploaded += 1
+                state[name] = content_hash
+                state_path.write_text(json.dumps(state, indent=1), encoding="utf-8")
+            else:
+                failed += 1
+                print(f"  ERROR {name}: {detail}")
+            print(f"[{position}/{len(documents)}] {'ok' if ok else 'fallo'} {name[:90]}")
+        if args.prune:
+            prune(client, args.base, {e["name"] for e in manifest["documents_manifest"]}, state, state_path)
+        if args.ingest and uploaded:
+            ok, detail = client.tool("ingerir_base", {"base": args.base})
+            print("Ingesta:", "lanzada" if ok else "no lanzada", "|", detail[:300])
+    finally:
+        client.close()
+    print(f"Subidos {uploaded}, sin cambios {unchanged}, fallidos {failed}. Estado: {state_path}")
+
+
+def prune(client: McpClient, base: str, current: set[str], state: dict, state_path: pathlib.Path) -> None:
+    """Delete documents this script uploaded whose page is no longer in the manifest."""
+    ok, listing = client.tool("listar_documentos", {"base": base})
+    if not ok:
+        print("No se pudo listar la base; no se borra nada.", listing[:200])
+        return
+    names = {d.get("name") for d in (json.loads(listing).get("documentos") or [])}
+    stale = sorted(n for n in names if n and n.startswith(MANAGED_PREFIX) and n not in current)
+    for name in stale:
+        ok, detail = client.tool("borrar_documento", {"base": base, "nombre": name})
+        print(f"Borrado {'ok' if ok else 'fallido'}: {name} {'' if ok else detail[:200]}")
+        if ok:
+            state.pop(name, None)
+    state_path.write_text(json.dumps(state, indent=1), encoding="utf-8")
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--discover", action="store_true")
+    mode.add_argument("--upload", action="store_true", help="Sube lo preparado por --dry-run (requiere --base)")
+    parser.add_argument("--base", default="", help="uuid de la base KE destino")
+    parser.add_argument("--ingest", action="store_true", help="Lanza la ingesta al terminar la subida")
+    parser.add_argument("--prune", action="store_true", help="Borra páginas propias que ya no están en el manifiesto")
+    parser.add_argument("--state", default="", help="Archivo de estado de subida (por defecto en --out)")
     parser.add_argument("--index", default=str(DEFAULT_INDEX))
     parser.add_argument("--collection", default=DEFAULT_COLLECTION)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--match", default="", help="Solo URLs que contengan alguno de estos textos (coma)")
     parser.add_argument("--delay", type=float, default=1.0, help="Segundos entre peticiones al sitio")
     parser.add_argument("--out", default="ke_web_sync_out")
     args = parser.parse_args(argv)
-    dry_run(args) if args.dry_run else discover(args)
+    if args.dry_run:
+        dry_run(args)
+    elif args.discover:
+        discover(args)
+    else:
+        upload(args)
 
 
 if __name__ == "__main__":
