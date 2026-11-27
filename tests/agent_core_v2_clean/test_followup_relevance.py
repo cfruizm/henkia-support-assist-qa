@@ -117,3 +117,19 @@ def test_followup_value_request_activates_the_document_list():
     assert any("5222" in x["text"] for x in out["generation_evidence"])
     new_topic = {**retrieval, "query": {"fields": {"user_act": "new_request", "topic_relation": "new_topic"}}}
     assert not followup_value_request(new_topic, "¿Y los puertos?")
+
+
+def test_value_followup_leaves_a_document_without_the_values():
+    from app.agent_core_v2_clean.unified_evidence_authority import _primary_continuity_selection
+
+    procedure = {"id": "R1", "title": "DA0403 Instalar monitor SDS", "source": "sp://da0403", "page": "",
+                 "text": "Para instalar el monitor SDS ejecute el instalador y registre el equipo en el portal."}
+    table = {"id": "R2", "title": "HP SDS Manager System Requirements", "source": "kb://sds-req", "page": "",
+             "text": "Puertos requeridos: 443 TCP salida, 5222 TCP mensajería, 161 UDP SNMP, 3910 TCP impresoras."}
+    out = {"query": {"fields": {"previous_evidence_role": "primary", "user_act": "request_elaboration",
+                                "current_message": "¿Y los puertos?", "goal": "Conocer los puertos de HP SDS Monitor"}},
+           "_answer_context": {"source_identities": ["sp://da0403"], "goal": "Requisitos de HP SDS Monitor"}}
+    assert _primary_continuity_selection(out, [procedure, table], {"puertos"}) is None
+    # When the active document has the values, continuity keeps it.
+    with_values = dict(procedure, text="Puertos del monitor: 443 TCP y 5222 TCP.")
+    assert _primary_continuity_selection(out, [with_values, table], {"puertos"}) is not None
