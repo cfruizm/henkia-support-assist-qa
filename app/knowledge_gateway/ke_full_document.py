@@ -32,6 +32,35 @@ def _mapping(value: Any) -> dict:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+REPEATED_LINE_MIN = 3
+REPEATED_LINE_CHARS = 12
+
+
+def strip_repeated_lines(text: str) -> str:
+    """Keep only the first occurrence of lines repeated across the document.
+
+    PDF page headers and footers (title, area, code, date) come back on every
+    page; in QA they filled most of each carried section. Detected by
+    repetition, not by content, so no word list is involved.
+    """
+    lines = str(text or "").splitlines()
+    counts: dict[str, int] = {}
+    for line in lines:
+        key = " ".join(line.split()).casefold()
+        if len(key) >= REPEATED_LINE_CHARS:
+            counts[key] = counts.get(key, 0) + 1
+    seen: set[str] = set()
+    kept = []
+    for line in lines:
+        key = " ".join(line.split()).casefold()
+        if counts.get(key, 0) >= REPEATED_LINE_MIN:
+            if key in seen:
+                continue
+            seen.add(key)
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def split_sections(text: str, size: int = SECTION_CHARS) -> list[str]:
     """Ordered sections of about ``size`` characters, cut at paragraph breaks."""
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", str(text or "")) if p.strip()]
@@ -125,7 +154,7 @@ def apply_full_document(retrieval: dict, reader: Callable, store: Any, request_t
         trace.update(latency_ms=raw.get("latency_ms"), schema_cached=raw.get("schema_cached"))
         if not raw.get("ok") or not raw.get("text"):
             return {**trace, "reason": "read_failed", "error_code": raw.get("error_code")}
-        text = str(raw["text"])
+        text = strip_repeated_lines(str(raw["text"]))
         _cache_text(store, uri, text)
     sections = split_sections(text)
     chosen = select_sections(sections, request_text)

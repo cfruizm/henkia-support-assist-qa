@@ -195,3 +195,22 @@ def test_sse_bytes_are_decoded_as_utf8_and_tool_json_is_unwrapped():
     assert out["ok"] and out["text"] == body
     assert "Ã" not in out["text"] and '"base"' not in out["text"]
     assert full.split_sections(out["text"], size=50) == ["A continuación, deberá realizar el registro.", "Ingrese el código de acceso."]
+
+
+def test_repeated_page_headers_are_kept_once():
+    header = "INSTRUCTIVO USO DASHBOARD ALPHA - STREAMLIT\nOperaciones y Tecnología | Operaciones\nCódigo: IN0504-6_V1"
+    pages = [f"{header}\nContenido de la página {i} con el paso {i}." for i in range(1, 5)]
+    text = full.strip_repeated_lines("\n\n".join(pages))
+    assert text.count("INSTRUCTIVO USO DASHBOARD ALPHA") == 1 and text.count("Código: IN0504-6_V1") == 1
+    assert all(f"paso {i}." in text for i in range(1, 5))
+
+
+def test_carried_evidence_keeps_a_full_section():
+    from app.agent_core_v2_clean.runtime_memory import _compact_evidence
+    from app.agent_core_v2_clean.semantic_fit import _compact_evidence_row
+
+    section = "Registro inicial. " + ("Paso documentado del registro con correo y código. " * 28)
+    assert len(section) <= full.SECTION_CHARS + 20
+    item = {"id": "R1", "title": "IN0504.pdf", "text": section, "metadata": {"provider": "henkia_ke"}}
+    assert _compact_evidence(item)["text"] == " ".join(section.split())
+    assert _compact_evidence_row(item)["text"] == " ".join(section.split())

@@ -15,7 +15,9 @@ CACHE_LIMITS={
  "internal_knowledge_cache":2,
 }
 MAX_EVIDENCE_ITEMS=6
-MAX_EVIDENCE_TEXT=700
+# A full KE document section is up to 1,500 chars; 700 cut the content a follow-up
+# needed (QA: SIMP registration). Few items are kept per session (MAX_EVIDENCE_ITEMS).
+MAX_EVIDENCE_TEXT=1600
 MAX_EXCERPT=900
 MAX_SHADOW_ANSWER=4000
 

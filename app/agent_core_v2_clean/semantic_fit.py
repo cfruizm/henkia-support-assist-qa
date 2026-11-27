@@ -165,7 +165,7 @@ def _compact_evidence_row(item):
     return {
         "id": item.get("id"), "title": title, "source": item.get("source"),
         "url": item.get("url"), "page": item.get("page"),
-        "text": " ".join(str(item.get("text") or "").split())[:1000],
+        "text": " ".join(str(item.get("text") or "").split())[:1600],
         # Preserve provenance fields required by the source-access policy. These
         # values are metadata only; retaining them does not broaden retrieval or
         # authorize a download by itself. The access policy still validates the
