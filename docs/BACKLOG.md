@@ -47,7 +47,13 @@ Limitaciones conocidas:
 
 Método: Impresion listada con la herramienta MCP `listar_documentos`; OperacionSIMP no se puede listar (`HENKIA-RAG-4001`, fuente conectada), se verificó buscando cada título DA Arus en esa base. Los conteos de OperacionSIMP son un mínimo.
 
-### Opción C — crawler externo + API del KE (a explorar)
+### Opción C — crawler externo + API del KE (implementada 2026-11-27)
+
+Estado: las 963 páginas web de PaperCut están en la base Impresion (una de las 964 ya no existe, 404) con `scripts/ke_web_sync.py` (`--dry-run`, `--upload`, `--prune`, `--ingest`, `--ingest-only`; MCP `subir_documento` con una key `kb:write` + `ingest` solo para el sincronizador). Validado en QA: Find-Me, Hold/Release, sincronización de varios dominios AD, Pull Delivery de Hive y solución de problemas de Find-Me responden desde KE con la página pública de PaperCut.
+
+Pendientes: programar la ejecución periódica (páginas nuevas, cambiadas y eliminadas con `--prune`); revisar la respuesta de requisitos de Mobility Print (usó la página de requisitos de PaperCut NG); falta DA0390 en OperacionSIMP; `leer_documento` falla de forma intermitente en Impresion (reportar al equipo de KE).
+
+Diseño original:
 
 Mientras el KE no tenga conector web, nuestro crawler sube las páginas al KE:
 
