@@ -1,6 +1,7 @@
 from __future__ import annotations
 import hashlib,json,re,unicodedata
 from .models import AgentResponse
+from .text_stems import collapse_by_stem, stem_index, term_matches
 from .source_footer import compact_sources, strip_generated_source_footer, with_source_metadata
 from .diagnostic_language import soften_diagnostic_certainty
 from .guidance_integrity import build_guidance_integrity_contract, integrity_diagnostic
@@ -15,13 +16,33 @@ def _norm(text):return unicodedata.normalize("NFKD",str(text or "")).encode("asc
 def _usable(e):
  text=_clean(e.get("text"));low=_norm(text);signals=sum(1 for x in OPERATIONAL_MARKERS if x in low);noise=sum(1 for x in BOILERPLATE if x in low)
  return len(text)>=80 and signals>=1 and signals>noise
-def evidence_pack(retrieval,max_items=8,max_chars=9000,preserve_document_context=False):
+def request_terms(message,understanding):
+ """Content terms of the current request (goal, details, message), subject removed."""
+ u=understanding or {};details=u.get("goal_updates") or {}
+ text=" ".join(str(x or "") for x in (message,u.get("current_goal"),*(details.values() if isinstance(details,dict) else ())))
+ subject=" ".join(str(x or "") for x in (u.get("canonical_subject"),details.get("subject") if isinstance(details,dict) else None))
+ skip={w for w in re.findall(r"[a-z0-9]+",_norm(subject))}
+ return collapse_by_stem({w for w in re.findall(r"[a-z0-9]+",_norm(text)) if len(w)>=4 and not w.isdigit() and w not in skip})
+
+def _answers_request(e,terms):
+ """True when the chunk contains, by stem, at least two terms of the request.
+
+ The operational marker list is a fixed verb list ("configurar", "instalar"...):
+ a chunk that answers the question with other verbs ("acceda", "registro",
+ "haga clic") was dropped (QA: SIMP registration). Matching the request itself
+ needs no word list."""
+ if not terms:return False
+ available=stem_index({w for w in re.findall(r"[a-z0-9]+",_norm(e.get("text"))) if len(w)>=3})
+ return sum(1 for t in terms if term_matches(t,available))>=min(2,len(terms))
+
+def evidence_pack(retrieval,max_items=8,max_chars=9000,preserve_document_context=False,terms=None):
  items=[];used=0;seen=set()
  for e in retrieval.get("evidence") or []:
   # Full-document procedure requests need headings, scope, branch descriptions
-  # and closing stages as well as imperative chunks. Focused troubleshooting
-  # keeps the stricter operational filter.
-  if not _usable(e) and not (preserve_document_context and len(_clean(e.get("text")))>=80):continue
+  # and closing stages as well as imperative chunks. Focused requests keep the
+  # operational filter, but a chunk that matches the request itself is kept.
+  long_enough=len(_clean(e.get("text")))>=80
+  if not _usable(e) and not (preserve_document_context and long_enough) and not (long_enough and _answers_request(e,terms)):continue
   text=_clean(e.get("text"))[:2100];sig=hashlib.sha256(text.casefold().encode()).hexdigest()
   if sig in seen:continue
   seen.add(sig);item={"id":e.get("id"),"title":e.get("title"),"page":e.get("page"),"source":e.get("url") or e.get("source"),"text":text};size=len(json.dumps(item,ensure_ascii=False))
@@ -122,7 +143,7 @@ class ProceduralAnswerComposer:
   relation=str(fields.get("topic_relation") or understanding.get("topic_relation") or "")
   act=str(fields.get("user_act") or understanding.get("user_act") or "")
   full_document_request=relation=="new_topic" and act in {"new_request","request_elaboration"}
-  packed_evidence=evidence_pack(retrieval,preserve_document_context=full_document_request)
+  packed_evidence=evidence_pack(retrieval,preserve_document_context=full_document_request,terms=request_terms(message,understanding))
   evidence=_limit_web_document_chunks(packed_evidence)
   if not (exp.get("ok") and exp.get("same_document_only") and exp.get("ordered") and evidence):return AgentResponse("La evidencia operacional todavía no es suficiente o consistente para redactar una orientación segura.","procedural_evidence_guard",False)
   from app.llm_gateway.models import LLMRequest

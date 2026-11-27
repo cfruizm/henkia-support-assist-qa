@@ -60,3 +60,16 @@ def test_title_alone_does_not_align_a_chunk_of_the_primary_document():
     assert verdict is not None
     assert [x["text"] for x in verdict["selected_evidence"]][0] == REGISTRATION
     assert CONSUMABLES not in [x["text"] for x in verdict["selected_evidence"]]
+
+
+def test_procedural_pack_keeps_a_chunk_that_answers_the_request_without_marker_verbs():
+    from app.agent_core_v2_clean.procedural_answer import evidence_pack, request_terms
+
+    registration = ("Acceda mediante el enlace web seguro enviado a su correo. Para ingresar por primera vez es necesario "
+                    "realizar el registro con su cuenta de correo y el token code enviado al correo electrónico.")
+    unrelated = "Ubicación física: información sobre dónde se encuentra cada equipo dentro de la sede del cliente."
+    retrieval = {"evidence": [{"id": "R1", "title": TITLE, "text": registration}, {"id": "R2", "title": TITLE, "text": unrelated}]}
+    terms = request_terms("¿Cómo me registro por primera vez en el dashboard de Alpha?", _understanding("request_elaboration"))
+    packed = evidence_pack(retrieval, terms=terms)
+    assert [x["id"] for x in packed] == ["R1"], (terms, packed)
+    assert evidence_pack(retrieval) == []  # previous behavior: neither chunk has a marker verb
